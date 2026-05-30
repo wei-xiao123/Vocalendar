@@ -27,6 +27,26 @@ export type CalendarEvent = {
   source_text: string | null
 }
 
+export type AssistantEventResult = {
+  id: number
+  title: string
+  starts_at: string
+  ends_at?: string | null
+  reminder_at?: string | null
+  status: string
+  source_text?: string | null
+}
+
+export type AssistantCommandResponse = {
+  action: string
+  confidence: number
+  text: string
+  parameters: Record<string, string>
+  message?: string
+  event?: AssistantEventResult
+  events?: AssistantEventResult[]
+}
+
 export type CreateEventPayload = {
   title: string
   starts_at: string
@@ -134,6 +154,20 @@ export function deleteEvent(eventId: number, accessToken: string): Promise<void>
     `/events/${eventId}`,
     {
       method: 'DELETE',
+    },
+    accessToken,
+  )
+}
+
+export function sendAssistantCommand(
+  text: string,
+  accessToken: string,
+): Promise<AssistantCommandResponse> {
+  return request<AssistantCommandResponse>(
+    '/assistant/commands',
+    {
+      method: 'POST',
+      body: JSON.stringify({ text }),
     },
     accessToken,
   )

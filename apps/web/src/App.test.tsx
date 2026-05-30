@@ -7,6 +7,7 @@ import {
   deleteEvent,
   getGitHubOAuthStartUrl,
   listEvents,
+  sendAssistantCommand,
 } from './lib/api'
 import { useSpeechRecognition } from './hooks/useSpeechRecognition'
 
@@ -16,6 +17,7 @@ vi.mock('./lib/api', () => ({
   deleteEvent: vi.fn(),
   getGitHubOAuthStartUrl: vi.fn(() => 'http://localhost:8000/auth/github/start'),
   listEvents: vi.fn(),
+  sendAssistantCommand: vi.fn(),
 }))
 
 vi.mock('./hooks/useSpeechRecognition', () => ({
@@ -27,6 +29,7 @@ const createGuestSessionMock = vi.mocked(createGuestSession)
 const deleteEventMock = vi.mocked(deleteEvent)
 const getGitHubOAuthStartUrlMock = vi.mocked(getGitHubOAuthStartUrl)
 const listEventsMock = vi.mocked(listEvents)
+const sendAssistantCommandMock = vi.mocked(sendAssistantCommand)
 const useSpeechRecognitionMock = vi.mocked(useSpeechRecognition)
 
 beforeEach(() => {
@@ -35,12 +38,20 @@ beforeEach(() => {
   createGuestSessionMock.mockReset()
   deleteEventMock.mockReset()
   listEventsMock.mockReset()
+  sendAssistantCommandMock.mockReset()
   useSpeechRecognitionMock.mockReset()
   getGitHubOAuthStartUrlMock.mockReturnValue(
     'http://localhost:8000/auth/github/start',
   )
   deleteEventMock.mockResolvedValue(undefined)
   listEventsMock.mockResolvedValue([])
+  sendAssistantCommandMock.mockResolvedValue({
+    action: 'unknown',
+    confidence: 0,
+    text: '未知命令',
+    parameters: {},
+    message: '暂未识别该命令。',
+  })
   useSpeechRecognitionMock.mockReturnValue({
     errorMessage: null,
     interimTranscript: '',
@@ -316,6 +327,66 @@ it('shows voice transcripts without executing commands', async () => {
   expect(await screen.findByText('添加提醒')).toBeInTheDocument()
   expect(screen.getByText('明天下午')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '停止识别' })).toBeInTheDocument()
+})
+
+it('renders assistant command controls for signed in users', async () => {
+  storeSession()
+
+  render(<App />)
+
+  expect(await screen.findByText('还没有日程。')).toBeInTheDocument()
+  expect(screen.getByLabelText('文本命令')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '执行' })).toBeDisabled()
+  expect(screen.getByText('还没有助手回复。')).toBeInTheDocument()
+})
+
+it('sends an assistant command and displays the result', async () => {
+  storeSession()
+  sendAssistantCommandMock.mockResolvedValue({
+    action: 'list_events',
+    confidence: 0.8,
+    text: '查看提醒',
+    parameters: {},
+    message: '找到 1 个日程。',
+    events: [
+      {
+        id: 7,
+        title: '产品评审',
+        starts_at: '2026-06-01T09:30:00',
+        status: 'scheduled',
+      },
+    ],
+  })
+
+  render(<App />)
+  await screen.findByText('还没有日程。')
+
+  fireEvent.change(screen.getByLabelText('文本命令'), {
+    target: { value: '查看提醒' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: '执行' }))
+
+  expect(sendAssistantCommandMock).toHaveBeenCalledWith('查看提醒', 'stored-token')
+  expect(await screen.findByText('找到 1 个日程。')).toBeInTheDocument()
+  expect(screen.getByText('产品评审')).toBeInTheDocument()
+  expect(screen.getByText('list_events')).toBeInTheDocument()
+})
+
+it('shows an error when assistant command execution fails', async () => {
+  storeSession()
+  sendAssistantCommandMock.mockRejectedValue(new Error('offline'))
+
+  render(<App />)
+  await screen.findByText('还没有日程。')
+
+  fireEvent.change(screen.getByLabelText('文本命令'), {
+    target: { value: '查看提醒' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: '执行' }))
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '助手命令执行失败，请稍后重试。',
+  )
 })
 
 it('navigates to GitHub OAuth start', () => {

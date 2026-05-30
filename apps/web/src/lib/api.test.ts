@@ -5,6 +5,7 @@ import {
   getCurrentUser,
   getGitHubOAuthStartUrl,
   listEvents,
+  sendAssistantCommand,
 } from './api'
 
 function mockFetch(response: Partial<Response> & { payload?: unknown }) {
@@ -121,6 +122,32 @@ it('handles empty delete response', async () => {
   await expect(deleteEvent(7, 'app-token')).resolves.toBeUndefined()
   expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:8000/events/7')
   expect(fetchMock.mock.calls[0][1].method).toBe('DELETE')
+})
+
+it('sends an assistant command with bearer token', async () => {
+  const fetchMock = mockFetch({
+    payload: {
+      action: 'list_events',
+      confidence: 0.8,
+      text: '查看提醒',
+      parameters: {},
+      message: '找到 0 个日程。',
+      events: [],
+    },
+  })
+
+  await expect(sendAssistantCommand('查看提醒', 'app-token')).resolves.toMatchObject({
+    action: 'list_events',
+    message: '找到 0 个日程。',
+  })
+
+  const [, options] = fetchMock.mock.calls[0]
+  expect(fetchMock.mock.calls[0][0]).toBe(
+    'http://localhost:8000/assistant/commands',
+  )
+  expect(options.method).toBe('POST')
+  expect(options.headers.get('Authorization')).toBe('Bearer app-token')
+  expect(JSON.parse(options.body as string)).toEqual({ text: '查看提醒' })
 })
 
 it('throws ApiError for non-ok responses', async () => {
