@@ -1,0 +1,35 @@
+[project]
+name = "vocalendar-api"
+version = "0.1.0"
+description = "FastAPI backend for the Vocalendar voice calendar tool."
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "alembic>=1.17.2",
+  "fastapi>=0.124.2",
+  "psycopg[binary]>=3.3.2",
+  "pydantic-settings>=2.12.0",
+  "python-dotenv>=1.2.1",
+  "sqlalchemy>=2.0.45",
+  "uvicorn[standard]>=0.38.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28.1",
+  "pytest>=9.0.2",
+  "ruff>=0.14.9",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.setuptools]
+packages = ["app"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

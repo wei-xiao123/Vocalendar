@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: vocalendar
+      POSTGRES_USER: vocalendar
+      POSTGRES_PASSWORD: vocalendar
+    ports:
+      - "5432:5432"
+    volumes:
+      - vocalendar-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vocalendar -d vocalendar"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  vocalendar-postgres:
