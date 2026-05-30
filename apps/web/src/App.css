@@ -59,7 +59,8 @@ h1 {
 .session-panel,
 .events-panel,
 .voice-panel,
-.assistant-panel {
+.assistant-panel,
+.notification-panel {
   margin-top: 28px;
 }
 
@@ -148,6 +149,11 @@ h1 {
 }
 
 .assistant-panel {
+  border-top: 1px solid #d8d8d0;
+  padding-top: 28px;
+}
+
+.notification-panel {
   border-top: 1px solid #d8d8d0;
   padding-top: 28px;
 }
@@ -295,6 +301,14 @@ h2 {
   padding: 4px 10px;
   background: #f3efe9;
   color: #7a512f;
+  font-weight: 800;
+}
+
+.notification-status {
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: #eff5f2;
+  color: #2f6f63;
   font-weight: 800;
 }
 

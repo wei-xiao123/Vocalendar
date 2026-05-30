@@ -116,6 +116,7 @@ function App() {
             />
             <VoiceInputControl />
             <AssistantPanel accessToken={authToken.access_token} />
+            <NotificationPermissionPanel />
           </>
         ) : (
           <section className="auth-panel" aria-label="登录入口">
@@ -151,6 +152,53 @@ function App() {
         )}
       </section>
     </main>
+  )
+}
+
+function NotificationPermissionPanel() {
+  const [permission, setPermission] = useState<NotificationPermission>(() => {
+    if (!('Notification' in window)) {
+      return 'denied'
+    }
+    return window.Notification.permission
+  })
+  const [isRequestingPermission, setIsRequestingPermission] = useState(false)
+  const isSupported = 'Notification' in window
+  const canRequestPermission = isSupported && permission === 'default'
+
+  async function handleRequestPermission() {
+    if (!canRequestPermission) {
+      return
+    }
+
+    setIsRequestingPermission(true)
+    try {
+      setPermission(await window.Notification.requestPermission())
+    } finally {
+      setIsRequestingPermission(false)
+    }
+  }
+
+  return (
+    <section className="notification-panel" aria-labelledby="notification-title">
+      <div className="section-header">
+        <div>
+          <p className="section-label">浏览器通知</p>
+          <h2 id="notification-title">提醒权限</h2>
+        </div>
+        <span className="notification-status">
+          {getNotificationStatusText(isSupported, permission)}
+        </span>
+      </div>
+      <button
+        className="secondary-button"
+        disabled={!canRequestPermission || isRequestingPermission}
+        onClick={() => void handleRequestPermission()}
+        type="button"
+      >
+        {isRequestingPermission ? '请求中...' : '请求通知权限'}
+      </button>
+    </section>
   )
 }
 
@@ -257,6 +305,22 @@ function getAssistantFallbackMessage(response: AssistantCommandResponse): string
     return '暂未识别该命令。'
   }
   return '命令已解析。'
+}
+
+function getNotificationStatusText(
+  isSupported: boolean,
+  permission: NotificationPermission,
+): string {
+  if (!isSupported) {
+    return '不支持'
+  }
+  if (permission === 'granted') {
+    return '已允许'
+  }
+  if (permission === 'denied') {
+    return '已拒绝'
+  }
+  return '未决定'
 }
 
 function VoiceInputControl() {

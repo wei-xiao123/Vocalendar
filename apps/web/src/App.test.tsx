@@ -34,6 +34,13 @@ const useSpeechRecognitionMock = vi.mocked(useSpeechRecognition)
 
 beforeEach(() => {
   window.localStorage.clear()
+  Object.defineProperty(window, 'Notification', {
+    configurable: true,
+    value: {
+      permission: 'default',
+      requestPermission: vi.fn().mockResolvedValue('granted'),
+    },
+  })
   createEventMock.mockReset()
   createGuestSessionMock.mockReset()
   deleteEventMock.mockReset()
@@ -62,6 +69,10 @@ beforeEach(() => {
     stop: vi.fn(),
     transcript: '',
   })
+})
+
+afterEach(() => {
+  Reflect.deleteProperty(window, 'Notification')
 })
 
 function storeSession() {
@@ -387,6 +398,48 @@ it('shows an error when assistant command execution fails', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent(
     '助手命令执行失败，请稍后重试。',
   )
+})
+
+it('renders browser notification permission controls', async () => {
+  storeSession()
+
+  render(<App />)
+
+  expect(await screen.findByText('还没有日程。')).toBeInTheDocument()
+  expect(screen.getByText('未决定')).toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: '请求通知权限' }),
+  ).toBeInTheDocument()
+})
+
+it('requests browser notification permission', async () => {
+  storeSession()
+  const requestPermission = vi.fn().mockResolvedValue('granted')
+  Object.defineProperty(window, 'Notification', {
+    configurable: true,
+    value: {
+      permission: 'default',
+      requestPermission,
+    },
+  })
+
+  render(<App />)
+  await screen.findByText('还没有日程。')
+
+  fireEvent.click(screen.getByRole('button', { name: '请求通知权限' }))
+
+  expect(requestPermission).toHaveBeenCalledOnce()
+  expect(await screen.findByText('已允许')).toBeInTheDocument()
+})
+
+it('disables notification permission request when unsupported', async () => {
+  storeSession()
+  Reflect.deleteProperty(window, 'Notification')
+
+  render(<App />)
+
+  expect(await screen.findByText('不支持')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '请求通知权限' })).toBeDisabled()
 })
 
 it('navigates to GitHub OAuth start', () => {
