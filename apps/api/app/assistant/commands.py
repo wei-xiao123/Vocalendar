@@ -17,6 +17,13 @@ LIST_RANGE_KEYWORDS = {
     "明天": "tomorrow",
     "全部": "all",
 }
+DELETE_COMMAND_PREFIXES = (
+    "删除提醒",
+    "删除日程",
+    "取消提醒",
+    "取消日程",
+    "帮我删除提醒",
+)
 DATETIME_PATTERN = re.compile(
     r"(?P<datetime>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?)"
 )
@@ -42,6 +49,10 @@ def parse_assistant_command(text: str) -> AssistantCommandResponse:
     list_command = _parse_list_command(normalized_text)
     if list_command is not None:
         return list_command
+
+    delete_payload = _strip_delete_command_prefix(normalized_text)
+    if delete_payload is not None:
+        return _parse_delete_command(normalized_text, delete_payload)
 
     return AssistantCommandResponse(
         action="unknown",
@@ -97,6 +108,26 @@ def _parse_list_command(text: str) -> AssistantCommandResponse | None:
         action="list_events",
         confidence=0.8,
         text=text,
+        parameters=parameters,
+    )
+
+
+def _strip_delete_command_prefix(text: str) -> str | None:
+    for prefix in DELETE_COMMAND_PREFIXES:
+        if text.startswith(prefix):
+            return text.removeprefix(prefix).strip(" ：:")
+    return None
+
+
+def _parse_delete_command(original_text: str, payload: str) -> AssistantCommandResponse:
+    parameters: dict[str, str] = {}
+    if payload:
+        parameters["title"] = payload
+
+    return AssistantCommandResponse(
+        action="delete_event",
+        confidence=0.85 if parameters else 0.6,
+        text=original_text,
         parameters=parameters,
     )
 
