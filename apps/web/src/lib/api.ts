@@ -10,11 +10,6 @@ export type AuthUser = {
   email: string | null
 }
 
-export type GuestUser = Pick<
-  AuthUser,
-  'id' | 'is_guest' | 'username' | 'display_name'
->
-
 export type AuthToken = {
   access_token: string
   token_type: 'bearer'
@@ -97,8 +92,8 @@ export function getGitHubOAuthStartUrl(
   return buildUrl('/auth/github/start', baseUrl)
 }
 
-export function createGuestSession(): Promise<GuestUser> {
-  return request<GuestUser>('/auth/guest', { method: 'POST' })
+export function createGuestSession(): Promise<AuthToken> {
+  return request<AuthToken>('/auth/guest', { method: 'POST' })
 }
 
 export function getCurrentUser(accessToken: string): Promise<AuthUser> {
