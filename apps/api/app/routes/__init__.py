@@ -1,4 +1,5 @@
+from app.routes.assistant import router as assistant_router
 from app.routes.auth import router as auth_router
 from app.routes.events import router as events_router
 
-__all__ = ["auth_router", "events_router"]
+__all__ = ["assistant_router", "auth_router", "events_router"]
