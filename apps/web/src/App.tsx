@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { type FormEvent, useEffect, useState } from 'react'
 
 import './App.css'
 import {
   type AuthToken,
   type CalendarEvent,
+  createEvent,
   createGuestSession,
   getGitHubOAuthStartUrl,
   listEvents,
@@ -152,6 +153,10 @@ function EventList({ accessToken }: { accessToken: string }) {
     initialEventListState,
   )
   const [isLoadingEvents, setIsLoadingEvents] = useState(true)
+  const [title, setTitle] = useState('')
+  const [startsAt, setStartsAt] = useState('')
+  const [isCreatingEvent, setIsCreatingEvent] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
 
   useEffect(() => {
     let isCurrent = true
@@ -185,6 +190,37 @@ function EventList({ accessToken }: { accessToken: string }) {
   }, [accessToken])
 
   const { events, error: eventsError } = eventListState
+  const canCreateEvent = title.trim().length > 0 && startsAt.length > 0
+
+  async function handleCreateEvent(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!canCreateEvent) {
+      return
+    }
+
+    setIsCreatingEvent(true)
+    setCreateError(null)
+
+    try {
+      const createdEvent = await createEvent(
+        {
+          title: title.trim(),
+          starts_at: startsAt,
+        },
+        accessToken,
+      )
+      setEventListState((current) => ({
+        ...current,
+        events: [...current.events, createdEvent].sort(compareEventsByStart),
+      }))
+      setTitle('')
+      setStartsAt('')
+    } catch {
+      setCreateError('日程创建失败，请检查内容后重试。')
+    } finally {
+      setIsCreatingEvent(false)
+    }
+  }
 
   return (
     <section className="events-panel" aria-labelledby="events-title">
@@ -195,6 +231,42 @@ function EventList({ accessToken }: { accessToken: string }) {
         </div>
         <span className="event-count">{events.length}</span>
       </div>
+
+      <form className="event-form" onSubmit={handleCreateEvent}>
+        <label>
+          <span>标题</span>
+          <input
+            name="title"
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="例如：产品评审"
+            required
+            type="text"
+            value={title}
+          />
+        </label>
+        <label>
+          <span>开始时间</span>
+          <input
+            name="starts_at"
+            onChange={(event) => setStartsAt(event.target.value)}
+            required
+            type="datetime-local"
+            value={startsAt}
+          />
+        </label>
+        <button
+          className="primary-button"
+          disabled={!canCreateEvent || isCreatingEvent}
+          type="submit"
+        >
+          {isCreatingEvent ? '正在创建...' : '添加日程'}
+        </button>
+      </form>
+      {createError ? (
+        <p className="error-message form-error" role="alert">
+          {createError}
+        </p>
+      ) : null}
 
       {isLoadingEvents ? (
         <p className="state-message">正在加载日程...</p>
@@ -220,6 +292,12 @@ function EventList({ accessToken }: { accessToken: string }) {
         <p className="state-message">还没有日程。</p>
       )}
     </section>
+  )
+}
+
+function compareEventsByStart(first: CalendarEvent, second: CalendarEvent) {
+  return (
+    new Date(first.starts_at).getTime() - new Date(second.starts_at).getTime()
   )
 }
 

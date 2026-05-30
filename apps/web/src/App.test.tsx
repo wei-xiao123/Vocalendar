@@ -1,20 +1,28 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import App from './App'
-import { createGuestSession, getGitHubOAuthStartUrl, listEvents } from './lib/api'
+import {
+  createEvent,
+  createGuestSession,
+  getGitHubOAuthStartUrl,
+  listEvents,
+} from './lib/api'
 
 vi.mock('./lib/api', () => ({
+  createEvent: vi.fn(),
   createGuestSession: vi.fn(),
   getGitHubOAuthStartUrl: vi.fn(() => 'http://localhost:8000/auth/github/start'),
   listEvents: vi.fn(),
 }))
 
+const createEventMock = vi.mocked(createEvent)
 const createGuestSessionMock = vi.mocked(createGuestSession)
 const getGitHubOAuthStartUrlMock = vi.mocked(getGitHubOAuthStartUrl)
 const listEventsMock = vi.mocked(listEvents)
 
 beforeEach(() => {
   window.localStorage.clear()
+  createEventMock.mockReset()
   createGuestSessionMock.mockReset()
   listEventsMock.mockReset()
   getGitHubOAuthStartUrlMock.mockReturnValue(
@@ -22,6 +30,24 @@ beforeEach(() => {
   )
   listEventsMock.mockResolvedValue([])
 })
+
+function storeSession() {
+  window.localStorage.setItem(
+    'vocalendar.auth',
+    JSON.stringify({
+      access_token: 'stored-token',
+      token_type: 'bearer',
+      user: {
+        id: 2,
+        is_guest: false,
+        username: 'octocat',
+        display_name: 'The Octocat',
+        avatar_url: null,
+        email: null,
+      },
+    }),
+  )
+}
 
 it('renders auth entry actions', () => {
   render(<App />)
@@ -55,21 +81,7 @@ it('creates and stores a guest session', async () => {
 })
 
 it('restores a stored session and can sign out', async () => {
-  window.localStorage.setItem(
-    'vocalendar.auth',
-    JSON.stringify({
-      access_token: 'stored-token',
-      token_type: 'bearer',
-      user: {
-        id: 2,
-        is_guest: false,
-        username: 'octocat',
-        display_name: 'The Octocat',
-        avatar_url: null,
-        email: null,
-      },
-    }),
-  )
+  storeSession()
 
   render(<App />)
 
@@ -84,21 +96,7 @@ it('restores a stored session and can sign out', async () => {
 })
 
 it('lists events for the restored session', async () => {
-  window.localStorage.setItem(
-    'vocalendar.auth',
-    JSON.stringify({
-      access_token: 'stored-token',
-      token_type: 'bearer',
-      user: {
-        id: 2,
-        is_guest: false,
-        username: 'octocat',
-        display_name: 'The Octocat',
-        avatar_url: null,
-        email: null,
-      },
-    }),
-  )
+  storeSession()
   listEventsMock.mockResolvedValue([
     {
       id: 7,
@@ -120,21 +118,7 @@ it('lists events for the restored session', async () => {
 })
 
 it('shows an empty event state', async () => {
-  window.localStorage.setItem(
-    'vocalendar.auth',
-    JSON.stringify({
-      access_token: 'stored-token',
-      token_type: 'bearer',
-      user: {
-        id: 2,
-        is_guest: false,
-        username: 'octocat',
-        display_name: 'The Octocat',
-        avatar_url: null,
-        email: null,
-      },
-    }),
-  )
+  storeSession()
 
   render(<App />)
 
@@ -142,27 +126,67 @@ it('shows an empty event state', async () => {
 })
 
 it('shows an event list error state', async () => {
-  window.localStorage.setItem(
-    'vocalendar.auth',
-    JSON.stringify({
-      access_token: 'stored-token',
-      token_type: 'bearer',
-      user: {
-        id: 2,
-        is_guest: false,
-        username: 'octocat',
-        display_name: 'The Octocat',
-        avatar_url: null,
-        email: null,
-      },
-    }),
-  )
+  storeSession()
   listEventsMock.mockRejectedValue(new Error('offline'))
 
   render(<App />)
 
   expect(await screen.findByRole('alert')).toHaveTextContent(
     '日程列表加载失败，请稍后重试。',
+  )
+})
+
+it('creates an event and adds it to the list', async () => {
+  storeSession()
+  createEventMock.mockResolvedValue({
+    id: 8,
+    user_id: 2,
+    title: '客户电话',
+    starts_at: '2026-05-31T10:00',
+    ends_at: null,
+    reminder_at: null,
+    status: 'scheduled',
+    source_text: null,
+  })
+
+  render(<App />)
+  await screen.findByText('还没有日程。')
+
+  fireEvent.change(screen.getByLabelText('标题'), {
+    target: { value: '客户电话' },
+  })
+  fireEvent.change(screen.getByLabelText('开始时间'), {
+    target: { value: '2026-05-31T10:00' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: '添加日程' }))
+
+  expect(createEventMock).toHaveBeenCalledWith(
+    {
+      title: '客户电话',
+      starts_at: '2026-05-31T10:00',
+    },
+    'stored-token',
+  )
+  expect(await screen.findByText('客户电话')).toBeInTheDocument()
+})
+
+it('shows an error when event creation fails', async () => {
+  storeSession()
+  createEventMock.mockRejectedValue(new Error('bad input'))
+
+  render(<App />)
+  await screen.findByText('还没有日程。')
+
+  fireEvent.change(screen.getByLabelText('标题'), {
+    target: { value: '客户电话' },
+  })
+  fireEvent.change(screen.getByLabelText('开始时间'), {
+    target: { value: '2026-05-31T10:00' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: '添加日程' }))
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '日程创建失败，请检查内容后重试。',
   )
 })
 

@@ -168,7 +168,7 @@ h2 {
 .event-list {
   display: grid;
   gap: 10px;
-  margin: 0;
+  margin: 18px 0 0;
   padding: 0;
   list-style: none;
 }
@@ -207,6 +207,43 @@ h2 {
   font-weight: 800;
 }
 
+.event-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(180px, 0.9fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 18px;
+}
+
+.event-form label {
+  display: grid;
+  gap: 6px;
+  color: #4d5751;
+  font-size: 0.86rem;
+  font-weight: 750;
+}
+
+.event-form input {
+  min-height: 44px;
+  min-width: 0;
+  border: 1px solid #c9cbc3;
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #fff;
+  color: #202522;
+  font: inherit;
+}
+
+.event-form input:focus {
+  border-color: #2f6f63;
+  outline: 2px solid rgba(47, 111, 99, 0.18);
+  outline-offset: 2px;
+}
+
+.form-error {
+  margin-bottom: 18px;
+}
+
 @media (max-width: 560px) {
   .app-header,
   .session-panel,
@@ -217,7 +254,12 @@ h2 {
 
   .auth-actions,
   .primary-button,
-  .secondary-button {
+  .secondary-button,
+  .event-form {
     width: 100%;
+  }
+
+  .event-form {
+    grid-template-columns: 1fr;
   }
 }
