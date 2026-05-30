@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from app.assistant import parse_assistant_command
 
 
@@ -20,6 +22,45 @@ def test_parse_add_command_with_remind_me_prefix() -> None:
     assert result.parameters == {
         "starts_at": "2026-06-01T09:30:00",
         "title": "开会",
+    }
+
+
+def test_parse_add_command_with_relative_chinese_datetime() -> None:
+    result = parse_assistant_command(
+        "明天下午三点提醒我开会",
+        now=datetime(2026, 5, 30, 10),
+    )
+
+    assert result.action == "add_event"
+    assert result.parameters == {
+        "starts_at": "2026-05-31T15:00:00",
+        "title": "开会",
+    }
+
+
+def test_parse_add_command_with_colloquial_add_phrase() -> None:
+    result = parse_assistant_command(
+        "帮我明天九点加个会",
+        now=datetime(2026, 5, 30, 10),
+    )
+
+    assert result.action == "add_event"
+    assert result.parameters == {
+        "starts_at": "2026-05-31T09:00:00",
+        "title": "会",
+    }
+
+
+def test_parse_add_command_with_chinese_half_hour() -> None:
+    result = parse_assistant_command(
+        "后天晚上八点半提醒我客户电话",
+        now=datetime(2026, 5, 30, 10),
+    )
+
+    assert result.action == "add_event"
+    assert result.parameters == {
+        "starts_at": "2026-06-01T20:30:00",
+        "title": "客户电话",
     }
 
 

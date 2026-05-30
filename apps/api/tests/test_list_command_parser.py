@@ -17,6 +17,20 @@ def test_parse_list_command_for_tomorrow() -> None:
     assert result.parameters == {"range": "tomorrow"}
 
 
+def test_parse_list_command_for_colloquial_schedule_query() -> None:
+    result = parse_assistant_command("明天有什么安排")
+
+    assert result.action == "list_events"
+    assert result.parameters == {"range": "tomorrow"}
+
+
+def test_parse_list_command_for_day_after_tomorrow() -> None:
+    result = parse_assistant_command("看看后天日程")
+
+    assert result.action == "list_events"
+    assert result.parameters == {"range": "day_after_tomorrow"}
+
+
 def test_parse_list_command_without_range() -> None:
     result = parse_assistant_command("列出提醒")
 

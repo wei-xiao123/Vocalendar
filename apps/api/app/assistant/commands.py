@@ -1,5 +1,5 @@
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from pydantic import BaseModel, Field
 
@@ -10,12 +10,33 @@ ADD_COMMAND_PREFIXES = (
     "提醒我",
     "帮我添加提醒",
 )
-LIST_COMMAND_KEYWORDS = ("查看", "列出", "有哪些")
-LIST_COMMAND_OBJECTS = ("提醒", "日程")
+ADD_COMMAND_KEYWORDS = ("添加", "新增", "创建", "提醒我", "加个", "加一个")
+LIST_COMMAND_KEYWORDS = ("查看", "列出", "有哪些", "有什么", "查一下", "看看")
+LIST_COMMAND_OBJECTS = ("提醒", "日程", "安排")
 LIST_RANGE_KEYWORDS = {
     "今天": "today",
     "明天": "tomorrow",
+    "后天": "day_after_tomorrow",
     "全部": "all",
+}
+RELATIVE_DATE_OFFSETS = {
+    "今天": 0,
+    "明天": 1,
+    "后天": 2,
+}
+CHINESE_DIGITS = {
+    "零": 0,
+    "〇": 0,
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
 }
 DELETE_COMMAND_PREFIXES = (
     "删除提醒",
@@ -27,6 +48,15 @@ DELETE_COMMAND_PREFIXES = (
 DATETIME_PATTERN = re.compile(
     r"(?P<datetime>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?)"
 )
+RELATIVE_DATETIME_PATTERN = re.compile(
+    r"(?P<date>今天|明天|后天)"
+    r"(?:的)?"
+    r"(?:(?P<period>凌晨|早上|上午|中午|下午|晚上|今晚)?"
+    r"(?P<hour>\d{1,2}|[零〇一二两三四五六七八九十]{1,3})"
+    r"(?:(?:点|时)(?P<minute>半|\d{1,2}分?|"
+    r"[零〇一二两三四五六七八九十]{1,3}分?)?|[:：](?P<colon_minute>\d{1,2})))?"
+)
+TITLE_EDGE_PATTERN = re.compile(r"^[\s，,：:的]+|[\s，,：:的]+$")
 
 
 class AssistantCommandRequest(BaseModel):
@@ -53,11 +83,15 @@ class AssistantEventResult(BaseModel):
     source_text: str | None
 
 
-def parse_assistant_command(text: str) -> AssistantCommandResponse:
+def parse_assistant_command(
+    text: str,
+    now: datetime | None = None,
+) -> AssistantCommandResponse:
     normalized_text = text.strip()
-    add_payload = _strip_add_command_prefix(normalized_text)
+    reference_time = now or datetime.now()
+    add_payload = _extract_add_command_payload(normalized_text)
     if add_payload is not None:
-        return _parse_add_command(normalized_text, add_payload)
+        return _parse_add_command(normalized_text, add_payload, reference_time)
 
     list_command = _parse_list_command(normalized_text)
     if list_command is not None:
@@ -81,7 +115,21 @@ def _strip_add_command_prefix(text: str) -> str | None:
     return None
 
 
-def _parse_add_command(original_text: str, payload: str) -> AssistantCommandResponse:
+def _extract_add_command_payload(text: str) -> str | None:
+    prefix_payload = _strip_add_command_prefix(text)
+    if prefix_payload is not None:
+        return prefix_payload
+
+    if any(keyword in text for keyword in ADD_COMMAND_KEYWORDS):
+        return text
+    return None
+
+
+def _parse_add_command(
+    original_text: str,
+    payload: str,
+    now: datetime,
+) -> AssistantCommandResponse:
     parameters: dict[str, str] = {}
     remaining_title = payload
 
@@ -93,7 +141,18 @@ def _parse_add_command(original_text: str, payload: str) -> AssistantCommandResp
             remaining_title = (
                 payload[: datetime_match.start()] + payload[datetime_match.end() :]
             ).strip(" ，,：:")
+    else:
+        relative_datetime_match = RELATIVE_DATETIME_PATTERN.search(payload)
+        if relative_datetime_match is not None:
+            starts_at = _normalize_relative_datetime(relative_datetime_match, now)
+            if starts_at is not None:
+                parameters["starts_at"] = starts_at
+                remaining_title = (
+                    payload[: relative_datetime_match.start()]
+                    + payload[relative_datetime_match.end() :]
+                ).strip(" ，,：:")
 
+    remaining_title = _clean_add_title(remaining_title)
     if remaining_title:
         parameters["title"] = remaining_title
 
@@ -111,11 +170,7 @@ def _parse_list_command(text: str) -> AssistantCommandResponse | None:
     if not has_list_intent or not has_list_object:
         return None
 
-    parameters: dict[str, str] = {}
-    for keyword, value in LIST_RANGE_KEYWORDS.items():
-        if keyword in text:
-            parameters["range"] = value
-            break
+    parameters = _extract_range_parameters(text)
 
     return AssistantCommandResponse(
         action="list_events",
@@ -129,13 +184,17 @@ def _strip_delete_command_prefix(text: str) -> str | None:
     for prefix in DELETE_COMMAND_PREFIXES:
         if text.startswith(prefix):
             return text.removeprefix(prefix).strip(" ：:")
+    for prefix in ("删除", "取消"):
+        if text.startswith(prefix):
+            return text.removeprefix(prefix).strip(" ：:")
     return None
 
 
 def _parse_delete_command(original_text: str, payload: str) -> AssistantCommandResponse:
-    parameters: dict[str, str] = {}
-    if payload:
-        parameters["title"] = payload
+    parameters = _extract_range_parameters(payload)
+    title = _clean_delete_title(payload)
+    if title:
+        parameters["title"] = title
 
     return AssistantCommandResponse(
         action="delete_event",
@@ -151,3 +210,119 @@ def _normalize_datetime(value: str) -> str | None:
     except ValueError:
         return None
     return parsed.isoformat()
+
+
+def _normalize_relative_datetime(
+    match: re.Match[str],
+    now: datetime,
+) -> str | None:
+    hour_text = match.group("hour")
+    if hour_text is None:
+        return None
+
+    hour = _parse_zh_number(hour_text)
+    if hour is None:
+        return None
+
+    minute = _parse_minute(match.group("minute"), match.group("colon_minute"))
+    if minute is None:
+        return None
+
+    hour = _apply_period(hour, match.group("period"))
+    if hour > 23 or minute > 59:
+        return None
+
+    target_date = now.date() + timedelta(
+        days=RELATIVE_DATE_OFFSETS[match.group("date")]
+    )
+    return datetime.combine(target_date, datetime.min.time()).replace(
+        hour=hour,
+        minute=minute,
+    ).isoformat()
+
+
+def _parse_minute(minute_text: str | None, colon_minute_text: str | None) -> int | None:
+    if colon_minute_text is not None:
+        return int(colon_minute_text)
+    if minute_text is None:
+        return 0
+    if minute_text == "半":
+        return 30
+
+    normalized_minute = minute_text.removesuffix("分")
+    return _parse_zh_number(normalized_minute)
+
+
+def _apply_period(hour: int, period: str | None) -> int:
+    if period in {"下午", "晚上", "今晚"} and hour < 12:
+        return hour + 12
+    if period == "中午" and hour < 11:
+        return hour + 12
+    return hour
+
+
+def _parse_zh_number(value: str) -> int | None:
+    if value.isdigit():
+        return int(value)
+    if value in CHINESE_DIGITS:
+        return CHINESE_DIGITS[value]
+    if "十" not in value:
+        return None
+
+    left, _, right = value.partition("十")
+    tens = CHINESE_DIGITS.get(left, 1) if left else 1
+    ones = CHINESE_DIGITS.get(right, 0) if right else 0
+    return tens * 10 + ones
+
+
+def _extract_range_parameters(text: str) -> dict[str, str]:
+    parameters: dict[str, str] = {}
+    for keyword, value in LIST_RANGE_KEYWORDS.items():
+        if keyword in text:
+            parameters["range"] = value
+            break
+    return parameters
+
+
+def _clean_add_title(value: str) -> str:
+    title = value
+    for phrase in (
+        "帮我添加提醒",
+        "添加提醒",
+        "新增提醒",
+        "创建提醒",
+        "帮我",
+        "提醒我",
+        "加一个",
+        "加个",
+        "添加",
+        "新增",
+        "创建",
+    ):
+        title = title.replace(phrase, " ")
+    return _normalize_title_text(title)
+
+
+def _clean_delete_title(value: str) -> str:
+    title = _remove_relative_date_words(value)
+    for phrase in ("帮我",):
+        title = title.replace(phrase, " ")
+    title = _normalize_title_text(title)
+    for suffix in ("提醒", "日程"):
+        title = _strip_title_edges(title.removesuffix(suffix))
+    return title
+
+
+def _remove_relative_date_words(value: str) -> str:
+    title = value
+    for keyword in RELATIVE_DATE_OFFSETS:
+        title = title.replace(keyword, " ")
+    return title
+
+
+def _normalize_title_text(value: str) -> str:
+    return _strip_title_edges(re.sub(r"\s+", " ", value))
+
+
+def _strip_title_edges(value: str) -> str:
+    return TITLE_EDGE_PATTERN.sub("", value)
