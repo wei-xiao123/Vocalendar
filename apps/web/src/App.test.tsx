@@ -1,22 +1,26 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import App from './App'
-import { createGuestSession, getGitHubOAuthStartUrl } from './lib/api'
+import { createGuestSession, getGitHubOAuthStartUrl, listEvents } from './lib/api'
 
 vi.mock('./lib/api', () => ({
   createGuestSession: vi.fn(),
   getGitHubOAuthStartUrl: vi.fn(() => 'http://localhost:8000/auth/github/start'),
+  listEvents: vi.fn(),
 }))
 
 const createGuestSessionMock = vi.mocked(createGuestSession)
 const getGitHubOAuthStartUrlMock = vi.mocked(getGitHubOAuthStartUrl)
+const listEventsMock = vi.mocked(listEvents)
 
 beforeEach(() => {
   window.localStorage.clear()
   createGuestSessionMock.mockReset()
+  listEventsMock.mockReset()
   getGitHubOAuthStartUrlMock.mockReturnValue(
     'http://localhost:8000/auth/github/start',
   )
+  listEventsMock.mockResolvedValue([])
 })
 
 it('renders auth entry actions', () => {
@@ -46,6 +50,7 @@ it('creates and stores a guest session', async () => {
 
   expect(createGuestSessionMock).toHaveBeenCalledOnce()
   expect(await screen.findByText('Guest User')).toBeInTheDocument()
+  expect(listEventsMock).toHaveBeenCalledWith('guest-token')
   expect(window.localStorage.getItem('vocalendar.auth')).toContain('guest-token')
 })
 
@@ -69,12 +74,96 @@ it('restores a stored session and can sign out', async () => {
   render(<App />)
 
   expect(screen.getByText('The Octocat')).toBeInTheDocument()
+  expect(listEventsMock).toHaveBeenCalledWith('stored-token')
   fireEvent.click(screen.getByRole('button', { name: '退出' }))
 
   await waitFor(() => {
     expect(window.localStorage.getItem('vocalendar.auth')).toBeNull()
   })
   expect(screen.getByRole('button', { name: '游客模式' })).toBeInTheDocument()
+})
+
+it('lists events for the restored session', async () => {
+  window.localStorage.setItem(
+    'vocalendar.auth',
+    JSON.stringify({
+      access_token: 'stored-token',
+      token_type: 'bearer',
+      user: {
+        id: 2,
+        is_guest: false,
+        username: 'octocat',
+        display_name: 'The Octocat',
+        avatar_url: null,
+        email: null,
+      },
+    }),
+  )
+  listEventsMock.mockResolvedValue([
+    {
+      id: 7,
+      user_id: 2,
+      title: '产品评审',
+      starts_at: '2026-05-31T09:30:00',
+      ends_at: null,
+      reminder_at: null,
+      status: 'scheduled',
+      source_text: null,
+    },
+  ])
+
+  render(<App />)
+
+  expect(await screen.findByText('产品评审')).toBeInTheDocument()
+  expect(screen.getByText('scheduled')).toBeInTheDocument()
+  expect(screen.getByText('1')).toBeInTheDocument()
+})
+
+it('shows an empty event state', async () => {
+  window.localStorage.setItem(
+    'vocalendar.auth',
+    JSON.stringify({
+      access_token: 'stored-token',
+      token_type: 'bearer',
+      user: {
+        id: 2,
+        is_guest: false,
+        username: 'octocat',
+        display_name: 'The Octocat',
+        avatar_url: null,
+        email: null,
+      },
+    }),
+  )
+
+  render(<App />)
+
+  expect(await screen.findByText('还没有日程。')).toBeInTheDocument()
+})
+
+it('shows an event list error state', async () => {
+  window.localStorage.setItem(
+    'vocalendar.auth',
+    JSON.stringify({
+      access_token: 'stored-token',
+      token_type: 'bearer',
+      user: {
+        id: 2,
+        is_guest: false,
+        username: 'octocat',
+        display_name: 'The Octocat',
+        avatar_url: null,
+        email: null,
+      },
+    }),
+  )
+  listEventsMock.mockRejectedValue(new Error('offline'))
+
+  render(<App />)
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '日程列表加载失败，请稍后重试。',
+  )
 })
 
 it('navigates to GitHub OAuth start', () => {

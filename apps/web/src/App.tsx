@@ -3,12 +3,24 @@ import { useEffect, useState } from 'react'
 import './App.css'
 import {
   type AuthToken,
+  type CalendarEvent,
   createGuestSession,
   getGitHubOAuthStartUrl,
+  listEvents,
 } from './lib/api'
 
 const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 const AUTH_STORAGE_KEY = 'vocalendar.auth'
+
+type EventListState = {
+  events: CalendarEvent[]
+  error: string | null
+}
+
+const initialEventListState: EventListState = {
+  events: [],
+  error: null,
+}
 
 function App() {
   const [authToken, setAuthToken] = useState<AuthToken | null>(() => {
@@ -75,18 +87,29 @@ function App() {
         </div>
 
         {authToken ? (
-          <section className="session-panel" aria-label="当前会话">
-            <div>
-              <p className="section-label">当前身份</p>
-              <p className="session-name">{displayName}</p>
-              <p className="session-meta">
-                {authToken.user.is_guest ? '游客会话' : 'GitHub 账号'}
-              </p>
-            </div>
-            <button className="secondary-button" type="button" onClick={handleSignOut}>
-              退出
-            </button>
-          </section>
+          <>
+            <section className="session-panel" aria-label="当前会话">
+              <div>
+                <p className="section-label">当前身份</p>
+                <p className="session-name">{displayName}</p>
+                <p className="session-meta">
+                  {authToken.user.is_guest ? '游客会话' : 'GitHub 账号'}
+                </p>
+              </div>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={handleSignOut}
+              >
+                退出
+              </button>
+            </section>
+
+            <EventList
+              accessToken={authToken.access_token}
+              key={authToken.access_token}
+            />
+          </>
         ) : (
           <section className="auth-panel" aria-label="登录入口">
             <div>
@@ -122,6 +145,100 @@ function App() {
       </section>
     </main>
   )
+}
+
+function EventList({ accessToken }: { accessToken: string }) {
+  const [eventListState, setEventListState] = useState<EventListState>(
+    initialEventListState,
+  )
+  const [isLoadingEvents, setIsLoadingEvents] = useState(true)
+
+  useEffect(() => {
+    let isCurrent = true
+
+    listEvents(accessToken)
+      .then((nextEvents) => {
+        if (isCurrent) {
+          setEventListState({
+            events: nextEvents,
+            error: null,
+          })
+        }
+      })
+      .catch(() => {
+        if (isCurrent) {
+          setEventListState({
+            events: [],
+            error: '日程列表加载失败，请稍后重试。',
+          })
+        }
+      })
+      .finally(() => {
+        if (isCurrent) {
+          setIsLoadingEvents(false)
+        }
+      })
+
+    return () => {
+      isCurrent = false
+    }
+  }, [accessToken])
+
+  const { events, error: eventsError } = eventListState
+
+  return (
+    <section className="events-panel" aria-labelledby="events-title">
+      <div className="section-header">
+        <div>
+          <p className="section-label">我的日程</p>
+          <h2 id="events-title">即将开始</h2>
+        </div>
+        <span className="event-count">{events.length}</span>
+      </div>
+
+      {isLoadingEvents ? (
+        <p className="state-message">正在加载日程...</p>
+      ) : eventsError ? (
+        <p className="error-message" role="alert">
+          {eventsError}
+        </p>
+      ) : events.length > 0 ? (
+        <ul className="event-list" aria-label="日程列表">
+          {events.map((event) => (
+            <li className="event-item" key={event.id}>
+              <div>
+                <p className="event-title">{event.title}</p>
+                <p className="event-time">
+                  {formatEventTime(event.starts_at, event.ends_at)}
+                </p>
+              </div>
+              <span className="event-status">{event.status}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="state-message">还没有日程。</p>
+      )}
+    </section>
+  )
+}
+
+function formatEventTime(startsAt: string, endsAt: string | null): string {
+  const startText = formatDateTime(startsAt)
+  if (!endsAt) {
+    return startText
+  }
+
+  return `${startText} - ${formatDateTime(endsAt)}`
+}
+
+function formatDateTime(value: string): string {
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value))
 }
 
 export default App
