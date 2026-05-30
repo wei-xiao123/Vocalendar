@@ -55,10 +55,10 @@ def test_assistant_commands_returns_parse_result_without_writing_events(
 
     assert response.status_code == 200
     assert response.json() == {
-        "action": "unknown",
-        "confidence": 0.0,
+        "action": "list_events",
+        "confidence": 0.8,
         "text": "查看今天提醒",
-        "parameters": {},
+        "parameters": {"range": "today"},
     }
 
     with TestingSessionLocal() as session:
