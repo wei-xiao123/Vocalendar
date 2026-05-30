@@ -10,6 +10,7 @@ import {
   getGitHubOAuthStartUrl,
   listEvents,
 } from './lib/api'
+import { useSpeechRecognition } from './hooks/useSpeechRecognition'
 
 const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 const AUTH_STORAGE_KEY = 'vocalendar.auth'
@@ -111,6 +112,7 @@ function App() {
               accessToken={authToken.access_token}
               key={authToken.access_token}
             />
+            <VoiceInputControl />
           </>
         ) : (
           <section className="auth-panel" aria-label="登录入口">
@@ -146,6 +148,66 @@ function App() {
         )}
       </section>
     </main>
+  )
+}
+
+function VoiceInputControl() {
+  const {
+    errorMessage,
+    interimTranscript,
+    isListening,
+    isSupported,
+    start,
+    status,
+    stop,
+    transcript,
+  } = useSpeechRecognition()
+  const hasTranscript = transcript.length > 0 || interimTranscript.length > 0
+
+  function handleToggleListening() {
+    if (isListening) {
+      stop()
+      return
+    }
+
+    start()
+  }
+
+  return (
+    <section className="voice-panel" aria-labelledby="voice-title">
+      <div className="section-header">
+        <div>
+          <p className="section-label">语音输入</p>
+          <h2 id="voice-title">麦克风</h2>
+        </div>
+        <span className="voice-status">{getVoiceStatusText(status)}</span>
+      </div>
+      <button
+        className="voice-button"
+        disabled={!isSupported}
+        onClick={handleToggleListening}
+        type="button"
+      >
+        {isListening ? '停止识别' : '开始识别'}
+      </button>
+      {errorMessage ? (
+        <p className="error-message voice-message" role="alert">
+          {errorMessage}
+        </p>
+      ) : null}
+      <p className="voice-transcript" aria-live="polite">
+        {hasTranscript ? (
+          <>
+            {transcript}
+            {interimTranscript ? (
+              <span className="interim-transcript">{interimTranscript}</span>
+            ) : null}
+          </>
+        ) : (
+          '等待语音输入。'
+        )}
+      </p>
+    </section>
   )
 }
 
@@ -335,6 +397,19 @@ function EventList({ accessToken }: { accessToken: string }) {
       )}
     </section>
   )
+}
+
+function getVoiceStatusText(status: string): string {
+  switch (status) {
+    case 'listening':
+      return '识别中'
+    case 'unsupported':
+      return '不支持'
+    case 'error':
+      return '异常'
+    default:
+      return '待机'
+  }
 }
 
 function compareEventsByStart(first: CalendarEvent, second: CalendarEvent) {

@@ -57,7 +57,8 @@ h1 {
 
 .auth-panel,
 .session-panel,
-.events-panel {
+.events-panel,
+.voice-panel {
   margin-top: 28px;
 }
 
@@ -136,6 +137,11 @@ h1 {
 }
 
 .events-panel {
+  border-top: 1px solid #d8d8d0;
+  padding-top: 28px;
+}
+
+.voice-panel {
   border-top: 1px solid #d8d8d0;
   padding-top: 28px;
 }
@@ -232,6 +238,52 @@ h2 {
   opacity: 0.65;
 }
 
+.voice-button {
+  min-height: 44px;
+  border: 1px solid #2f6f63;
+  border-radius: 8px;
+  padding: 0 18px;
+  background: #eff5f2;
+  color: #24594f;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.voice-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.voice-status {
+  min-width: 56px;
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: #eff5f2;
+  color: #2f6f63;
+  text-align: center;
+  font-weight: 800;
+}
+
+.voice-message {
+  margin-top: 12px;
+}
+
+.voice-transcript {
+  min-height: 68px;
+  border: 1px solid #e0e1d9;
+  border-radius: 8px;
+  margin: 14px 0 0;
+  padding: 14px 16px;
+  background: #fff;
+  color: #202522;
+  line-height: 1.7;
+}
+
+.interim-transcript {
+  color: #70786f;
+}
+
 .event-form {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(180px, 0.9fr) auto;
@@ -280,6 +332,7 @@ h2 {
   .auth-actions,
   .primary-button,
   .secondary-button,
+  .voice-button,
   .event-form {
     width: 100%;
   }
