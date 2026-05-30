@@ -420,6 +420,92 @@ it('sends an assistant command and displays the result', async () => {
   expect(screen.getByText('list_events')).toBeInTheDocument()
 })
 
+it('refreshes the event list after an assistant add command succeeds', async () => {
+  storeSession()
+  const createdEvent = {
+    id: 9,
+    user_id: 2,
+    title: '语音会议',
+    starts_at: '2026-06-01T11:00:00',
+    ends_at: null,
+    reminder_at: null,
+    status: 'scheduled',
+    source_text: '添加提醒 2026-06-01 11:00 语音会议',
+  }
+  listEventsMock.mockResolvedValueOnce([]).mockResolvedValueOnce([createdEvent])
+  sendAssistantCommandMock.mockResolvedValue({
+    action: 'add_event',
+    confidence: 0.95,
+    text: '添加提醒 2026-06-01 11:00 语音会议',
+    parameters: {},
+    message: '已添加日程。',
+    event: {
+      id: createdEvent.id,
+      title: createdEvent.title,
+      starts_at: createdEvent.starts_at,
+      status: createdEvent.status,
+    },
+  })
+
+  render(<App />)
+  await screen.findByText('还没有日程。')
+
+  fireEvent.change(screen.getByLabelText('文本命令'), {
+    target: { value: '添加提醒 2026-06-01 11:00 语音会议' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: '执行' }))
+
+  expect(await screen.findByText('已添加日程。')).toBeInTheDocument()
+  await waitFor(() => {
+    expect(listEventsMock).toHaveBeenCalledTimes(2)
+  })
+  expect(screen.getByRole('list', { name: '日程列表' })).toHaveTextContent(
+    '语音会议',
+  )
+})
+
+it('refreshes the event list after an assistant delete command succeeds', async () => {
+  storeSession()
+  const existingEvent = {
+    id: 7,
+    user_id: 2,
+    title: '产品评审',
+    starts_at: '2026-06-01T09:30:00',
+    ends_at: null,
+    reminder_at: null,
+    status: 'scheduled',
+    source_text: null,
+  }
+  listEventsMock.mockResolvedValueOnce([existingEvent]).mockResolvedValueOnce([])
+  sendAssistantCommandMock.mockResolvedValue({
+    action: 'delete_event',
+    confidence: 0.9,
+    text: '删除提醒 产品评审',
+    parameters: {},
+    message: '已删除日程。',
+    event: {
+      id: existingEvent.id,
+      title: existingEvent.title,
+      starts_at: existingEvent.starts_at,
+      status: existingEvent.status,
+    },
+  })
+
+  render(<App />)
+  expect(await screen.findByText('产品评审')).toBeInTheDocument()
+
+  fireEvent.change(screen.getByLabelText('文本命令'), {
+    target: { value: '删除提醒 产品评审' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: '执行' }))
+
+  expect(await screen.findByText('已删除日程。')).toBeInTheDocument()
+  await waitFor(() => {
+    expect(listEventsMock).toHaveBeenCalledTimes(2)
+  })
+  expect(screen.getByText('还没有日程。')).toBeInTheDocument()
+})
+
 it('shows an error when assistant command execution fails', async () => {
   storeSession()
   sendAssistantCommandMock.mockRejectedValue(new Error('offline'))

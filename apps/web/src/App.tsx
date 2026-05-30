@@ -52,6 +52,7 @@ function App() {
   })
   const [isCreatingGuest, setIsCreatingGuest] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [eventListRefreshKey, setEventListRefreshKey] = useState(0)
   const [notificationPermission, setNotificationPermission] =
     useState<NotificationPermission>(() => getInitialNotificationPermission())
 
@@ -84,6 +85,10 @@ function App() {
   function handleSignOut() {
     setAuthToken(null)
     setErrorMessage(null)
+  }
+
+  function refreshEventList() {
+    setEventListRefreshKey((current) => current + 1)
   }
 
   const displayName =
@@ -125,8 +130,12 @@ function App() {
               accessToken={authToken.access_token}
               key={authToken.access_token}
               notificationPermission={notificationPermission}
+              refreshKey={eventListRefreshKey}
             />
-            <AssistantCommandWorkspace accessToken={authToken.access_token} />
+            <AssistantCommandWorkspace
+              accessToken={authToken.access_token}
+              onEventsChanged={refreshEventList}
+            />
             <NotificationPermissionPanel
               permission={notificationPermission}
               setPermission={setNotificationPermission}
@@ -216,7 +225,13 @@ function NotificationPermissionPanel({
   )
 }
 
-function AssistantCommandWorkspace({ accessToken }: { accessToken: string }) {
+function AssistantCommandWorkspace({
+  accessToken,
+  onEventsChanged,
+}: {
+  accessToken: string
+  onEventsChanged: () => void
+}) {
   const [commandText, setCommandText] = useState('')
   const [isSendingCommand, setIsSendingCommand] = useState(false)
   const [assistantResponse, setAssistantResponse] =
@@ -234,7 +249,11 @@ function AssistantCommandWorkspace({ accessToken }: { accessToken: string }) {
     setAssistantError(null)
 
     try {
-      setAssistantResponse(await sendAssistantCommand(normalizedCommandText, accessToken))
+      const response = await sendAssistantCommand(normalizedCommandText, accessToken)
+      setAssistantResponse(response)
+      if (shouldRefreshEventsAfterAssistantResponse(response)) {
+        onEventsChanged()
+      }
       setCommandText('')
     } catch {
       setAssistantError('助手命令执行失败，请稍后重试。')
@@ -269,6 +288,15 @@ function AssistantCommandWorkspace({ accessToken }: { accessToken: string }) {
         onSubmit={handleAssistantSubmit}
       />
     </>
+  )
+}
+
+function shouldRefreshEventsAfterAssistantResponse(
+  response: AssistantCommandResponse,
+): boolean {
+  return (
+    response.event !== undefined &&
+    (response.action === 'add_event' || response.action === 'delete_event')
   )
 }
 
@@ -472,9 +500,11 @@ function VoiceInputControl({
 function EventList({
   accessToken,
   notificationPermission,
+  refreshKey,
 }: {
   accessToken: string
   notificationPermission: NotificationPermission
+  refreshKey: number
 }) {
   const [eventListState, setEventListState] = useState<EventListState>(
     initialEventListState,
@@ -518,7 +548,7 @@ function EventList({
     return () => {
       isCurrent = false
     }
-  }, [accessToken])
+  }, [accessToken, refreshKey])
 
   const { events, error: eventsError } = eventListState
   const canCreateEvent = title.trim().length > 0 && startsAt.length > 0
