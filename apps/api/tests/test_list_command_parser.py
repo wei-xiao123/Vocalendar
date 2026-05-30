@@ -25,7 +25,7 @@ def test_parse_list_command_without_range() -> None:
 
 
 def test_parse_non_list_command_stays_unknown() -> None:
-    result = parse_assistant_command("删除提醒")
+    result = parse_assistant_command("播放音乐")
 
     assert result.action == "unknown"
     assert result.parameters == {}
