@@ -8,6 +8,10 @@ Thumbs.db
 *.swp
 *.swo
 
+# Local planning and agent configuration
+docs/
+skills/
+
 # Environment files
 .env
 .env.*
