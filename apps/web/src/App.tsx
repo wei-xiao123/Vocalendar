@@ -126,8 +126,7 @@ function App() {
               key={authToken.access_token}
               notificationPermission={notificationPermission}
             />
-            <VoiceInputControl />
-            <AssistantPanel accessToken={authToken.access_token} />
+            <AssistantCommandWorkspace accessToken={authToken.access_token} />
             <NotificationPermissionPanel
               permission={notificationPermission}
               setPermission={setNotificationPermission}
@@ -217,7 +216,7 @@ function NotificationPermissionPanel({
   )
 }
 
-function AssistantPanel({ accessToken }: { accessToken: string }) {
+function AssistantCommandWorkspace({ accessToken }: { accessToken: string }) {
   const [commandText, setCommandText] = useState('')
   const [isSendingCommand, setIsSendingCommand] = useState(false)
   const [assistantResponse, setAssistantResponse] =
@@ -225,9 +224,9 @@ function AssistantPanel({ accessToken }: { accessToken: string }) {
   const [assistantError, setAssistantError] = useState<string | null>(null)
   const canSendCommand = commandText.trim().length > 0
 
-  async function handleAssistantSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!canSendCommand) {
+  async function sendCommand(nextCommandText: string) {
+    const normalizedCommandText = nextCommandText.trim()
+    if (!normalizedCommandText) {
       return
     }
 
@@ -235,7 +234,7 @@ function AssistantPanel({ accessToken }: { accessToken: string }) {
     setAssistantError(null)
 
     try {
-      setAssistantResponse(await sendAssistantCommand(commandText.trim(), accessToken))
+      setAssistantResponse(await sendAssistantCommand(normalizedCommandText, accessToken))
       setCommandText('')
     } catch {
       setAssistantError('助手命令执行失败，请稍后重试。')
@@ -244,6 +243,52 @@ function AssistantPanel({ accessToken }: { accessToken: string }) {
     }
   }
 
+  function handleAssistantSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    void sendCommand(commandText)
+  }
+
+  function handleVoiceCommand(nextCommandText: string) {
+    setCommandText(nextCommandText.trim())
+    void sendCommand(nextCommandText)
+  }
+
+  return (
+    <>
+      <VoiceInputControl
+        isSendingCommand={isSendingCommand}
+        onCommand={handleVoiceCommand}
+      />
+      <AssistantPanel
+        assistantError={assistantError}
+        assistantResponse={assistantResponse}
+        canSendCommand={canSendCommand}
+        commandText={commandText}
+        isSendingCommand={isSendingCommand}
+        onCommandTextChange={setCommandText}
+        onSubmit={handleAssistantSubmit}
+      />
+    </>
+  )
+}
+
+function AssistantPanel({
+  assistantError,
+  assistantResponse,
+  canSendCommand,
+  commandText,
+  isSendingCommand,
+  onCommandTextChange,
+  onSubmit,
+}: {
+  assistantError: string | null
+  assistantResponse: AssistantCommandResponse | null
+  canSendCommand: boolean
+  commandText: string
+  isSendingCommand: boolean
+  onCommandTextChange: (commandText: string) => void
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void
+}) {
   return (
     <section className="assistant-panel" aria-labelledby="assistant-title">
       <div className="section-header">
@@ -255,12 +300,12 @@ function AssistantPanel({ accessToken }: { accessToken: string }) {
           <span className="assistant-action">{assistantResponse.action}</span>
         ) : null}
       </div>
-      <form className="assistant-form" onSubmit={handleAssistantSubmit}>
+      <form className="assistant-form" onSubmit={onSubmit}>
         <label>
           <span>文本命令</span>
           <input
             name="assistant-command"
-            onChange={(event) => setCommandText(event.target.value)}
+            onChange={(event) => onCommandTextChange(event.target.value)}
             placeholder="例如：查看今天提醒"
             type="text"
             value={commandText}
@@ -338,7 +383,13 @@ function getNotificationStatusText(
   return '未决定'
 }
 
-function VoiceInputControl() {
+function VoiceInputControl({
+  isSendingCommand,
+  onCommand,
+}: {
+  isSendingCommand: boolean
+  onCommand: (commandText: string) => void
+}) {
   const {
     errorMessage,
     interimTranscript,
@@ -350,6 +401,8 @@ function VoiceInputControl() {
     transcript,
   } = useSpeechRecognition()
   const hasTranscript = transcript.length > 0 || interimTranscript.length > 0
+  const commandText = transcript.trim()
+  const canSendVoiceCommand = commandText.length > 0 && !isSendingCommand
 
   function handleToggleListening() {
     if (isListening) {
@@ -358,6 +411,14 @@ function VoiceInputControl() {
     }
 
     start()
+  }
+
+  function handleSendVoiceCommand() {
+    if (!canSendVoiceCommand) {
+      return
+    }
+
+    onCommand(commandText)
   }
 
   return (
@@ -369,14 +430,24 @@ function VoiceInputControl() {
         </div>
         <span className="voice-status">{getVoiceStatusText(status)}</span>
       </div>
-      <button
-        className="voice-button"
-        disabled={!isSupported}
-        onClick={handleToggleListening}
-        type="button"
-      >
-        {isListening ? '停止识别' : '开始识别'}
-      </button>
+      <div className="voice-actions">
+        <button
+          className="voice-button"
+          disabled={!isSupported}
+          onClick={handleToggleListening}
+          type="button"
+        >
+          {isListening ? '停止识别' : '开始识别'}
+        </button>
+        <button
+          className="secondary-button"
+          disabled={!canSendVoiceCommand}
+          onClick={handleSendVoiceCommand}
+          type="button"
+        >
+          {isSendingCommand ? '执行中...' : '执行语音命令'}
+        </button>
+      </div>
       {errorMessage ? (
         <p className="error-message voice-message" role="alert">
           {errorMessage}
