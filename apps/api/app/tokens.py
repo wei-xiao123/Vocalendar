@@ -22,3 +22,20 @@ def create_access_token(
         resolved_settings.jwt_secret,
         algorithm=resolved_settings.jwt_algorithm,
     )
+
+
+def decode_access_token(token: str, settings: Settings | None = None) -> str:
+    resolved_settings = settings or get_settings()
+    try:
+        payload = jwt.decode(
+            token,
+            resolved_settings.jwt_secret,
+            algorithms=[resolved_settings.jwt_algorithm],
+        )
+    except jwt.InvalidTokenError as exc:
+        raise ValueError("Invalid access token") from exc
+
+    subject = payload.get("sub")
+    if not isinstance(subject, str) or not subject:
+        raise ValueError("Invalid access token subject")
+    return subject
