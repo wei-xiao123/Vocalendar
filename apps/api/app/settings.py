@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     database_url: str = (
         "postgresql+psycopg://vocalendar:vocalendar@localhost:5432/vocalendar"
     )
+    github_client_id: str = ""
+    github_client_secret: str = ""
+    github_oauth_redirect_uri: str = "http://localhost:8000/auth/github/callback"
 
     model_config = SettingsConfigDict(
         env_file=(ROOT_DIR / ".env", API_DIR / ".env"),
@@ -38,6 +41,10 @@ class Settings(BaseSettings):
                 "postgresql://", "postgresql+psycopg://", 1
             )
         return self.database_url
+
+    @property
+    def github_oauth_configured(self) -> bool:
+        return bool(self.github_client_id.strip())
 
 
 @lru_cache
