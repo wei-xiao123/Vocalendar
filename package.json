@@ -1,0 +1,17 @@
+{
+  "name": "vocalendar",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev:web": "npm --prefix apps/web run dev -- --host 127.0.0.1 --port 5175",
+    "build:web": "npm --prefix apps/web run build",
+    "lint:web": "npm --prefix apps/web run lint",
+    "test:web": "npm --prefix apps/web run test",
+    "dev:api": "cd apps/api && uvicorn app.main:app --reload",
+    "test:api": "cd apps/api && python -m pytest",
+    "lint:api": "cd apps/api && python -m ruff check ."
+  },
+  "engines": {
+    "node": "24.x"
+  }
+}
