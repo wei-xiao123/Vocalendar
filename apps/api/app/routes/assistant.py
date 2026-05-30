@@ -34,6 +34,8 @@ def parse_command(
             return _create_event_from_command(session, user.id, parsed_command)
         if parsed_command.action == "list_events":
             return _list_events_from_command(session, user.id, parsed_command)
+        if parsed_command.action == "delete_event":
+            return _delete_event_from_command(session, user.id, parsed_command)
         return parsed_command
     finally:
         session.close()
@@ -81,6 +83,33 @@ def _list_events_from_command(
     events = [_to_assistant_event_result(event) for event in session.scalars(statement)]
     parsed_command.message = f"找到 {len(events)} 个日程。"
     parsed_command.events = events
+    return parsed_command
+
+
+def _delete_event_from_command(
+    session,
+    user_id: int,
+    parsed_command: AssistantCommandResponse,
+) -> AssistantCommandResponse:
+    title = parsed_command.parameters.get("title")
+    if not title:
+        parsed_command.message = "缺少要删除的日程标题。"
+        return parsed_command
+
+    statement = (
+        select(Event)
+        .where(Event.user_id == user_id, Event.title == title)
+        .order_by(Event.starts_at.asc(), Event.id.asc())
+    )
+    event = session.scalars(statement).first()
+    if event is None:
+        parsed_command.message = "未找到匹配日程。"
+        return parsed_command
+
+    parsed_command.event = _to_assistant_event_result(event)
+    session.delete(event)
+    session.commit()
+    parsed_command.message = "已删除日程。"
     return parsed_command
 
 
