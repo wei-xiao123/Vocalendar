@@ -9,6 +9,8 @@ import {
   deleteEvent,
   getGitHubOAuthStartUrl,
   listEvents,
+  sendAssistantCommand,
+  type AssistantCommandResponse,
 } from './lib/api'
 import { useSpeechRecognition } from './hooks/useSpeechRecognition'
 
@@ -113,6 +115,7 @@ function App() {
               key={authToken.access_token}
             />
             <VoiceInputControl />
+            <AssistantPanel accessToken={authToken.access_token} />
           </>
         ) : (
           <section className="auth-panel" aria-label="登录入口">
@@ -149,6 +152,111 @@ function App() {
       </section>
     </main>
   )
+}
+
+function AssistantPanel({ accessToken }: { accessToken: string }) {
+  const [commandText, setCommandText] = useState('')
+  const [isSendingCommand, setIsSendingCommand] = useState(false)
+  const [assistantResponse, setAssistantResponse] =
+    useState<AssistantCommandResponse | null>(null)
+  const [assistantError, setAssistantError] = useState<string | null>(null)
+  const canSendCommand = commandText.trim().length > 0
+
+  async function handleAssistantSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!canSendCommand) {
+      return
+    }
+
+    setIsSendingCommand(true)
+    setAssistantError(null)
+
+    try {
+      setAssistantResponse(await sendAssistantCommand(commandText.trim(), accessToken))
+      setCommandText('')
+    } catch {
+      setAssistantError('助手命令执行失败，请稍后重试。')
+    } finally {
+      setIsSendingCommand(false)
+    }
+  }
+
+  return (
+    <section className="assistant-panel" aria-labelledby="assistant-title">
+      <div className="section-header">
+        <div>
+          <p className="section-label">助手</p>
+          <h2 id="assistant-title">命令结果</h2>
+        </div>
+        {assistantResponse ? (
+          <span className="assistant-action">{assistantResponse.action}</span>
+        ) : null}
+      </div>
+      <form className="assistant-form" onSubmit={handleAssistantSubmit}>
+        <label>
+          <span>文本命令</span>
+          <input
+            name="assistant-command"
+            onChange={(event) => setCommandText(event.target.value)}
+            placeholder="例如：查看今天提醒"
+            type="text"
+            value={commandText}
+          />
+        </label>
+        <button
+          className="primary-button"
+          disabled={!canSendCommand || isSendingCommand}
+          type="submit"
+        >
+          {isSendingCommand ? '执行中...' : '执行'}
+        </button>
+      </form>
+      {assistantError ? (
+        <p className="error-message form-error" role="alert">
+          {assistantError}
+        </p>
+      ) : null}
+      {assistantResponse ? (
+        <div className="assistant-result" aria-live="polite">
+          <p>{assistantResponse.message ?? getAssistantFallbackMessage(assistantResponse)}</p>
+          {assistantResponse.event ? (
+            <AssistantEventSummary event={assistantResponse.event} />
+          ) : null}
+          {assistantResponse.events && assistantResponse.events.length > 0 ? (
+            <ul className="assistant-event-list" aria-label="助手返回日程">
+              {assistantResponse.events.map((event) => (
+                <li key={event.id}>
+                  <AssistantEventSummary event={event} />
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : (
+        <p className="state-message">还没有助手回复。</p>
+      )}
+    </section>
+  )
+}
+
+function AssistantEventSummary({
+  event,
+}: {
+  event: NonNullable<AssistantCommandResponse['event']>
+}) {
+  return (
+    <div className="assistant-event">
+      <p className="event-title">{event.title}</p>
+      <p className="event-time">{formatEventTime(event.starts_at, event.ends_at ?? null)}</p>
+    </div>
+  )
+}
+
+function getAssistantFallbackMessage(response: AssistantCommandResponse): string {
+  if (response.action === 'unknown') {
+    return '暂未识别该命令。'
+  }
+  return '命令已解析。'
 }
 
 function VoiceInputControl() {
