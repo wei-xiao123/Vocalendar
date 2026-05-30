@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import App from './App'
 import {
@@ -34,12 +34,14 @@ const useSpeechRecognitionMock = vi.mocked(useSpeechRecognition)
 
 beforeEach(() => {
   window.localStorage.clear()
+  vi.useRealTimers()
   Object.defineProperty(window, 'Notification', {
     configurable: true,
-    value: {
-      permission: 'default',
-      requestPermission: vi.fn().mockResolvedValue('granted'),
-    },
+    value: vi.fn(),
+  })
+  Object.assign(window.Notification, {
+    permission: 'default',
+    requestPermission: vi.fn().mockResolvedValue('granted'),
   })
   createEventMock.mockReset()
   createGuestSessionMock.mockReset()
@@ -72,6 +74,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   Reflect.deleteProperty(window, 'Notification')
 })
 
@@ -417,10 +420,11 @@ it('requests browser notification permission', async () => {
   const requestPermission = vi.fn().mockResolvedValue('granted')
   Object.defineProperty(window, 'Notification', {
     configurable: true,
-    value: {
-      permission: 'default',
-      requestPermission,
-    },
+    value: vi.fn(),
+  })
+  Object.assign(window.Notification, {
+    permission: 'default',
+    requestPermission,
   })
 
   render(<App />)
@@ -430,6 +434,91 @@ it('requests browser notification permission', async () => {
 
   expect(requestPermission).toHaveBeenCalledOnce()
   expect(await screen.findByText('已允许')).toBeInTheDocument()
+})
+
+it('schedules reminders while the page is open after notification permission is granted', async () => {
+  vi.useFakeTimers()
+  storeSession()
+  const notificationMock = vi.fn()
+  Object.defineProperty(window, 'Notification', {
+    configurable: true,
+    value: notificationMock,
+  })
+  Object.assign(window.Notification, {
+    permission: 'granted',
+    requestPermission: vi.fn(),
+  })
+  const now = new Date('2026-05-31T09:00:00').getTime()
+  vi.setSystemTime(now)
+  listEventsMock.mockResolvedValue([
+    {
+      id: 7,
+      user_id: 2,
+      title: '产品评审',
+      starts_at: '2026-05-31T09:30:00',
+      ends_at: null,
+      reminder_at: '2026-05-31T09:01:00',
+      status: 'scheduled',
+      source_text: null,
+    },
+  ])
+
+  render(<App />)
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+  expect(screen.getByText('产品评审')).toBeInTheDocument()
+
+  expect(notificationMock).not.toHaveBeenCalled()
+  await act(async () => {
+    vi.advanceTimersByTime(60_000)
+  })
+
+  expect(notificationMock).toHaveBeenCalledWith('产品评审', {
+    body: expect.any(String),
+    tag: 'vocalendar-event-7',
+  })
+})
+
+it('does not schedule reminders before notification permission is granted', async () => {
+  vi.useFakeTimers()
+  storeSession()
+  const notificationMock = vi.fn()
+  Object.defineProperty(window, 'Notification', {
+    configurable: true,
+    value: notificationMock,
+  })
+  Object.assign(window.Notification, {
+    permission: 'default',
+    requestPermission: vi.fn().mockResolvedValue('granted'),
+  })
+  vi.setSystemTime(new Date('2026-05-31T09:00:00').getTime())
+  listEventsMock.mockResolvedValue([
+    {
+      id: 7,
+      user_id: 2,
+      title: '产品评审',
+      starts_at: '2026-05-31T09:30:00',
+      ends_at: null,
+      reminder_at: '2026-05-31T09:01:00',
+      status: 'scheduled',
+      source_text: null,
+    },
+  ])
+
+  render(<App />)
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+  expect(screen.getByText('产品评审')).toBeInTheDocument()
+
+  await act(async () => {
+    vi.advanceTimersByTime(60_000)
+  })
+
+  expect(notificationMock).not.toHaveBeenCalled()
 })
 
 it('disables notification permission request when unsupported', async () => {

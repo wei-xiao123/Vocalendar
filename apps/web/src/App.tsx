@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from 'react'
+import { type FormEvent, useEffect, useRef, useState } from 'react'
 
 import './App.css'
 import {
@@ -27,6 +27,15 @@ const initialEventListState: EventListState = {
   error: null,
 }
 
+const MAX_REMINDER_DELAY_MS = 2_147_483_647
+
+function getInitialNotificationPermission(): NotificationPermission {
+  if (!('Notification' in window)) {
+    return 'denied'
+  }
+  return window.Notification.permission
+}
+
 function App() {
   const [authToken, setAuthToken] = useState<AuthToken | null>(() => {
     const storedValue = window.localStorage.getItem(AUTH_STORAGE_KEY)
@@ -43,6 +52,8 @@ function App() {
   })
   const [isCreatingGuest, setIsCreatingGuest] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [notificationPermission, setNotificationPermission] =
+    useState<NotificationPermission>(() => getInitialNotificationPermission())
 
   useEffect(() => {
     if (authToken) {
@@ -113,10 +124,14 @@ function App() {
             <EventList
               accessToken={authToken.access_token}
               key={authToken.access_token}
+              notificationPermission={notificationPermission}
             />
             <VoiceInputControl />
             <AssistantPanel accessToken={authToken.access_token} />
-            <NotificationPermissionPanel />
+            <NotificationPermissionPanel
+              permission={notificationPermission}
+              setPermission={setNotificationPermission}
+            />
           </>
         ) : (
           <section className="auth-panel" aria-label="登录入口">
@@ -155,13 +170,13 @@ function App() {
   )
 }
 
-function NotificationPermissionPanel() {
-  const [permission, setPermission] = useState<NotificationPermission>(() => {
-    if (!('Notification' in window)) {
-      return 'denied'
-    }
-    return window.Notification.permission
-  })
+function NotificationPermissionPanel({
+  permission,
+  setPermission,
+}: {
+  permission: NotificationPermission
+  setPermission: (permission: NotificationPermission) => void
+}) {
   const [isRequestingPermission, setIsRequestingPermission] = useState(false)
   const isSupported = 'Notification' in window
   const canRequestPermission = isSupported && permission === 'default'
@@ -383,7 +398,13 @@ function VoiceInputControl() {
   )
 }
 
-function EventList({ accessToken }: { accessToken: string }) {
+function EventList({
+  accessToken,
+  notificationPermission,
+}: {
+  accessToken: string
+  notificationPermission: NotificationPermission
+}) {
   const [eventListState, setEventListState] = useState<EventListState>(
     initialEventListState,
   )
@@ -430,6 +451,7 @@ function EventList({ accessToken }: { accessToken: string }) {
 
   const { events, error: eventsError } = eventListState
   const canCreateEvent = title.trim().length > 0 && startsAt.length > 0
+  useReminderNotificationScheduler(events, notificationPermission)
 
   async function handleCreateEvent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -582,6 +604,48 @@ function getVoiceStatusText(status: string): string {
     default:
       return '待机'
   }
+}
+
+function useReminderNotificationScheduler(
+  events: CalendarEvent[],
+  permission: NotificationPermission,
+) {
+  const notifiedEventIdsRef = useRef<Set<number>>(new Set())
+
+  useEffect(() => {
+    if (!('Notification' in window) || permission !== 'granted') {
+      return
+    }
+
+    const timeoutIds = events.flatMap((event) => {
+      if (notifiedEventIdsRef.current.has(event.id)) {
+        return []
+      }
+
+      const notifyAt = event.reminder_at ?? event.starts_at
+      const delay = new Date(notifyAt).getTime() - Date.now()
+      if (Number.isNaN(delay) || delay < 0 || delay > MAX_REMINDER_DELAY_MS) {
+        return []
+      }
+
+      const timeoutId = window.setTimeout(() => {
+        if (notifiedEventIdsRef.current.has(event.id)) {
+          return
+        }
+
+        new window.Notification(event.title, {
+          body: formatEventTime(event.starts_at, event.ends_at),
+          tag: `vocalendar-event-${event.id}`,
+        })
+        notifiedEventIdsRef.current.add(event.id)
+      }, delay)
+      return [timeoutId]
+    })
+
+    return () => {
+      timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId))
+    }
+  }, [events, permission])
 }
 
 function compareEventsByStart(first: CalendarEvent, second: CalendarEvent) {
