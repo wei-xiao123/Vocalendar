@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     github_client_id: str = ""
     github_client_secret: str = ""
     github_oauth_redirect_uri: str = "http://localhost:8000/auth/github/callback"
+    jwt_secret: str = "replace-this-in-production"
+    jwt_algorithm: str = "HS256"
 
     model_config = SettingsConfigDict(
         env_file=(ROOT_DIR / ".env", API_DIR / ".env"),
