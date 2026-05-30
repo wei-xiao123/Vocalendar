@@ -2,7 +2,7 @@ from secrets import token_urlsafe
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from starlette.responses import RedirectResponse
@@ -10,7 +10,7 @@ from starlette.responses import RedirectResponse
 from app.db import SessionLocal
 from app.models import User
 from app.settings import get_settings
-from app.tokens import create_access_token
+from app.tokens import create_access_token, decode_access_token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -35,6 +35,17 @@ class AuthTokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: AuthUserResponse
+
+
+def _to_auth_user_response(user: User) -> AuthUserResponse:
+    return AuthUserResponse(
+        id=user.id,
+        is_guest=user.is_guest,
+        username=user.username,
+        display_name=user.display_name,
+        avatar_url=user.avatar_url,
+        email=user.email,
+    )
 
 
 def _create_guest_user(session: Session) -> User:
@@ -62,6 +73,39 @@ def create_guest_session() -> GuestUserResponse:
             username=user.username,
             display_name=user.display_name,
         )
+    finally:
+        session.close()
+
+
+def _extract_bearer_token(authorization: str | None) -> str:
+    scheme, _, token = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return token
+
+
+def _get_user_from_access_token(session: Session, token: str) -> User:
+    settings = get_settings()
+    try:
+        subject = decode_access_token(token, settings)
+        user_id = int(subject)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=401, detail="Invalid access token") from None
+
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid access token")
+    return user
+
+
+@router.get("/me", response_model=AuthUserResponse)
+def get_current_user(
+    authorization: str | None = Header(default=None),
+) -> AuthUserResponse:
+    token = _extract_bearer_token(authorization)
+    session = SessionLocal()
+    try:
+        return _to_auth_user_response(_get_user_from_access_token(session, token))
     finally:
         session.close()
 
@@ -176,14 +220,7 @@ def handle_github_oauth_callback(code: str) -> AuthTokenResponse:
         user = _upsert_github_user(session, github_user)
         return AuthTokenResponse(
             access_token=create_access_token(str(user.id), settings),
-            user=AuthUserResponse(
-                id=user.id,
-                is_guest=user.is_guest,
-                username=user.username,
-                display_name=user.display_name,
-                avatar_url=user.avatar_url,
-                email=user.email,
-            ),
+            user=_to_auth_user_response(user),
         )
     finally:
         session.close()
