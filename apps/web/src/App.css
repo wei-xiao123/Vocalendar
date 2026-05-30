@@ -207,6 +207,31 @@ h2 {
   font-weight: 800;
 }
 
+.event-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.danger-button {
+  min-height: 34px;
+  border: 1px solid #d7b7b7;
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #fff7f7;
+  color: #9d2f2f;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.danger-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .event-form {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(180px, 0.9fr) auto;
@@ -261,5 +286,9 @@ h2 {
 
   .event-form {
     grid-template-columns: 1fr;
+  }
+
+  .event-actions {
+    justify-content: space-between;
   }
 }

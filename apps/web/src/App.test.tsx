@@ -4,6 +4,7 @@ import App from './App'
 import {
   createEvent,
   createGuestSession,
+  deleteEvent,
   getGitHubOAuthStartUrl,
   listEvents,
 } from './lib/api'
@@ -11,12 +12,14 @@ import {
 vi.mock('./lib/api', () => ({
   createEvent: vi.fn(),
   createGuestSession: vi.fn(),
+  deleteEvent: vi.fn(),
   getGitHubOAuthStartUrl: vi.fn(() => 'http://localhost:8000/auth/github/start'),
   listEvents: vi.fn(),
 }))
 
 const createEventMock = vi.mocked(createEvent)
 const createGuestSessionMock = vi.mocked(createGuestSession)
+const deleteEventMock = vi.mocked(deleteEvent)
 const getGitHubOAuthStartUrlMock = vi.mocked(getGitHubOAuthStartUrl)
 const listEventsMock = vi.mocked(listEvents)
 
@@ -24,10 +27,12 @@ beforeEach(() => {
   window.localStorage.clear()
   createEventMock.mockReset()
   createGuestSessionMock.mockReset()
+  deleteEventMock.mockReset()
   listEventsMock.mockReset()
   getGitHubOAuthStartUrlMock.mockReturnValue(
     'http://localhost:8000/auth/github/start',
   )
+  deleteEventMock.mockResolvedValue(undefined)
   listEventsMock.mockResolvedValue([])
 })
 
@@ -188,6 +193,60 @@ it('shows an error when event creation fails', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent(
     '日程创建失败，请检查内容后重试。',
   )
+})
+
+it('deletes an event from the list', async () => {
+  storeSession()
+  listEventsMock.mockResolvedValue([
+    {
+      id: 7,
+      user_id: 2,
+      title: '产品评审',
+      starts_at: '2026-05-31T09:30:00',
+      ends_at: null,
+      reminder_at: null,
+      status: 'scheduled',
+      source_text: null,
+    },
+  ])
+
+  render(<App />)
+  expect(await screen.findByText('产品评审')).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: '删除 产品评审' }))
+
+  expect(deleteEventMock).toHaveBeenCalledWith(7, 'stored-token')
+  await waitFor(() => {
+    expect(screen.queryByText('产品评审')).not.toBeInTheDocument()
+  })
+  expect(screen.getByText('还没有日程。')).toBeInTheDocument()
+})
+
+it('shows an error when event deletion fails', async () => {
+  storeSession()
+  deleteEventMock.mockRejectedValue(new Error('offline'))
+  listEventsMock.mockResolvedValue([
+    {
+      id: 7,
+      user_id: 2,
+      title: '产品评审',
+      starts_at: '2026-05-31T09:30:00',
+      ends_at: null,
+      reminder_at: null,
+      status: 'scheduled',
+      source_text: null,
+    },
+  ])
+
+  render(<App />)
+  expect(await screen.findByText('产品评审')).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: '删除 产品评审' }))
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '日程删除失败，请稍后重试。',
+  )
+  expect(screen.getByText('产品评审')).toBeInTheDocument()
 })
 
 it('navigates to GitHub OAuth start', () => {
