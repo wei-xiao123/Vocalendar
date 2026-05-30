@@ -8,6 +8,7 @@ import {
   getGitHubOAuthStartUrl,
   listEvents,
 } from './lib/api'
+import { useSpeechRecognition } from './hooks/useSpeechRecognition'
 
 vi.mock('./lib/api', () => ({
   createEvent: vi.fn(),
@@ -17,11 +18,16 @@ vi.mock('./lib/api', () => ({
   listEvents: vi.fn(),
 }))
 
+vi.mock('./hooks/useSpeechRecognition', () => ({
+  useSpeechRecognition: vi.fn(),
+}))
+
 const createEventMock = vi.mocked(createEvent)
 const createGuestSessionMock = vi.mocked(createGuestSession)
 const deleteEventMock = vi.mocked(deleteEvent)
 const getGitHubOAuthStartUrlMock = vi.mocked(getGitHubOAuthStartUrl)
 const listEventsMock = vi.mocked(listEvents)
+const useSpeechRecognitionMock = vi.mocked(useSpeechRecognition)
 
 beforeEach(() => {
   window.localStorage.clear()
@@ -29,11 +35,22 @@ beforeEach(() => {
   createGuestSessionMock.mockReset()
   deleteEventMock.mockReset()
   listEventsMock.mockReset()
+  useSpeechRecognitionMock.mockReset()
   getGitHubOAuthStartUrlMock.mockReturnValue(
     'http://localhost:8000/auth/github/start',
   )
   deleteEventMock.mockResolvedValue(undefined)
   listEventsMock.mockResolvedValue([])
+  useSpeechRecognitionMock.mockReturnValue({
+    errorMessage: null,
+    interimTranscript: '',
+    isListening: false,
+    isSupported: true,
+    start: vi.fn(),
+    status: 'idle',
+    stop: vi.fn(),
+    transcript: '',
+  })
 })
 
 function storeSession() {
@@ -247,6 +264,58 @@ it('shows an error when event deletion fails', async () => {
     '日程删除失败，请稍后重试。',
   )
   expect(screen.getByText('产品评审')).toBeInTheDocument()
+})
+
+it('renders voice input controls for signed in users', async () => {
+  storeSession()
+
+  render(<App />)
+
+  expect(await screen.findByText('还没有日程。')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '开始识别' })).toBeInTheDocument()
+  expect(screen.getByText('等待语音输入。')).toBeInTheDocument()
+})
+
+it('starts voice recognition from the microphone control', async () => {
+  storeSession()
+  const start = vi.fn()
+  useSpeechRecognitionMock.mockReturnValue({
+    errorMessage: null,
+    interimTranscript: '',
+    isListening: false,
+    isSupported: true,
+    start,
+    status: 'idle',
+    stop: vi.fn(),
+    transcript: '',
+  })
+
+  render(<App />)
+  await screen.findByText('还没有日程。')
+
+  fireEvent.click(screen.getByRole('button', { name: '开始识别' }))
+
+  expect(start).toHaveBeenCalledOnce()
+})
+
+it('shows voice transcripts without executing commands', async () => {
+  storeSession()
+  useSpeechRecognitionMock.mockReturnValue({
+    errorMessage: null,
+    interimTranscript: '明天下午',
+    isListening: true,
+    isSupported: true,
+    start: vi.fn(),
+    status: 'listening',
+    stop: vi.fn(),
+    transcript: '添加提醒',
+  })
+
+  render(<App />)
+
+  expect(await screen.findByText('添加提醒')).toBeInTheDocument()
+  expect(screen.getByText('明天下午')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '停止识别' })).toBeInTheDocument()
 })
 
 it('navigates to GitHub OAuth start', () => {
