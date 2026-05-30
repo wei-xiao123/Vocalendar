@@ -30,16 +30,25 @@ it('builds the GitHub OAuth start URL', () => {
 it('creates a guest session', async () => {
   const fetchMock = mockFetch({
     payload: {
-      id: 1,
-      is_guest: true,
-      username: null,
-      display_name: 'Guest User',
+      access_token: 'guest-token',
+      token_type: 'bearer',
+      user: {
+        id: 1,
+        is_guest: true,
+        username: null,
+        display_name: 'Guest User',
+        avatar_url: null,
+        email: null,
+      },
     },
   })
 
   await expect(createGuestSession()).resolves.toMatchObject({
-    id: 1,
-    is_guest: true,
+    access_token: 'guest-token',
+    user: {
+      id: 1,
+      is_guest: true,
+    },
   })
   expect(fetchMock).toHaveBeenCalledWith(
     'http://localhost:8000/auth/guest',

@@ -15,13 +15,6 @@ from app.tokens import create_access_token, decode_access_token
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-class GuestUserResponse(BaseModel):
-    id: int
-    is_guest: bool
-    username: str | None = None
-    display_name: str | None = None
-
-
 class AuthUserResponse(BaseModel):
     id: int
     is_guest: bool
@@ -62,16 +55,15 @@ def _create_guest_user(session: Session) -> User:
     return user
 
 
-@router.post("/guest", response_model=GuestUserResponse)
-def create_guest_session() -> GuestUserResponse:
+@router.post("/guest", response_model=AuthTokenResponse)
+def create_guest_session() -> AuthTokenResponse:
+    settings = get_settings()
     session = SessionLocal()
     try:
         user = _create_guest_user(session)
-        return GuestUserResponse(
-            id=user.id,
-            is_guest=user.is_guest,
-            username=user.username,
-            display_name=user.display_name,
+        return AuthTokenResponse(
+            access_token=create_access_token(str(user.id), settings),
+            user=_to_auth_user_response(user),
         )
     finally:
         session.close()
