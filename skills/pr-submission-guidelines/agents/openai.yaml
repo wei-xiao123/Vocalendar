@@ -1,4 +1,0 @@
-interface:
-  display_name: "PR Submission Guidelines"
-  short_description: "Create and review focused PR submissions"
-  default_prompt: "Use $pr-submission-guidelines to draft a complete PR title and description for my current changes."
