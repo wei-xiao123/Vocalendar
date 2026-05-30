@@ -38,6 +38,19 @@ class AssistantCommandResponse(BaseModel):
     confidence: float = Field(ge=0, le=1)
     text: str
     parameters: dict[str, str] = Field(default_factory=dict)
+    message: str | None = None
+    event: "AssistantEventResult | None" = None
+    events: list["AssistantEventResult"] | None = None
+
+
+class AssistantEventResult(BaseModel):
+    id: int
+    title: str
+    starts_at: datetime
+    ends_at: datetime | None
+    reminder_at: datetime | None
+    status: str
+    source_text: str | None
 
 
 def parse_assistant_command(text: str) -> AssistantCommandResponse:

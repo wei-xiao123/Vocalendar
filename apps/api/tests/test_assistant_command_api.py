@@ -63,3 +63,75 @@ def test_assistant_commands_returns_parse_result_without_writing_events(
 
     with TestingSessionLocal() as session:
         assert session.scalars(select(Event)).all() == []
+
+
+def test_assistant_add_command_creates_event(monkeypatch) -> None:
+    TestingSessionLocal = build_test_session()
+    with TestingSessionLocal() as session:
+        session.add(User(username="octocat", is_guest=False))
+        session.commit()
+
+    monkeypatch.setattr("app.routes.assistant.SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr("app.routes.auth.get_settings", auth_settings)
+    token = create_access_token("1", auth_settings())
+    client = TestClient(app)
+
+    response = client.post(
+        "/assistant/commands",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": "添加提醒 2026-06-01 09:30 产品评审"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "add_event",
+        "confidence": 0.85,
+        "text": "添加提醒 2026-06-01 09:30 产品评审",
+        "parameters": {
+            "starts_at": "2026-06-01T09:30:00",
+            "title": "产品评审",
+        },
+        "message": "已创建日程。",
+        "event": {
+            "id": 1,
+            "title": "产品评审",
+            "starts_at": "2026-06-01T09:30:00",
+            "status": "scheduled",
+            "source_text": "添加提醒 2026-06-01 09:30 产品评审",
+        },
+    }
+
+    with TestingSessionLocal() as session:
+        event = session.scalars(select(Event)).one()
+        assert event.user_id == 1
+        assert event.title == "产品评审"
+
+
+def test_assistant_add_command_requires_title_and_start(monkeypatch) -> None:
+    TestingSessionLocal = build_test_session()
+    with TestingSessionLocal() as session:
+        session.add(User(username="octocat", is_guest=False))
+        session.commit()
+
+    monkeypatch.setattr("app.routes.assistant.SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr("app.routes.auth.get_settings", auth_settings)
+    token = create_access_token("1", auth_settings())
+    client = TestClient(app)
+
+    response = client.post(
+        "/assistant/commands",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": "添加提醒 产品评审"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "add_event",
+        "confidence": 0.85,
+        "text": "添加提醒 产品评审",
+        "parameters": {"title": "产品评审"},
+        "message": "缺少日程标题或开始时间。",
+    }
+
+    with TestingSessionLocal() as session:
+        assert session.scalars(select(Event)).all() == []
