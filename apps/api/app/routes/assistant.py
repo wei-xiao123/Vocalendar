@@ -1,6 +1,7 @@
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 
 from fastapi import APIRouter, Header
+from sqlalchemy import select
 
 from app.assistant import (
     AssistantCommandRequest,
@@ -31,6 +32,8 @@ def parse_command(
         parsed_command = parse_assistant_command(payload.text)
         if parsed_command.action == "add_event":
             return _create_event_from_command(session, user.id, parsed_command)
+        if parsed_command.action == "list_events":
+            return _list_events_from_command(session, user.id, parsed_command)
         return parsed_command
     finally:
         session.close()
@@ -60,6 +63,40 @@ def _create_event_from_command(
     parsed_command.message = "已创建日程。"
     parsed_command.event = _to_assistant_event_result(event)
     return parsed_command
+
+
+def _list_events_from_command(
+    session,
+    user_id: int,
+    parsed_command: AssistantCommandResponse,
+) -> AssistantCommandResponse:
+    statement = select(Event).where(Event.user_id == user_id)
+    range_bounds = _get_range_bounds(parsed_command.parameters.get("range"))
+    if range_bounds is not None:
+        starts_from, starts_to = range_bounds
+        statement = statement.where(Event.starts_at >= starts_from)
+        statement = statement.where(Event.starts_at <= starts_to)
+    statement = statement.order_by(Event.starts_at.asc(), Event.id.asc())
+
+    events = [_to_assistant_event_result(event) for event in session.scalars(statement)]
+    parsed_command.message = f"找到 {len(events)} 个日程。"
+    parsed_command.events = events
+    return parsed_command
+
+
+def _get_range_bounds(range_value: str | None) -> tuple[datetime, datetime] | None:
+    today = date.today()
+    if range_value == "today":
+        target_date = today
+    elif range_value == "tomorrow":
+        target_date = today + timedelta(days=1)
+    else:
+        return None
+
+    return (
+        datetime.combine(target_date, time.min),
+        datetime.combine(target_date, time.max),
+    )
 
 
 def _parse_starts_at(value: str | None) -> datetime | None:

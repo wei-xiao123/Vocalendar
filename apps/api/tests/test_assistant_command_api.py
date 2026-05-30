@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -59,10 +61,63 @@ def test_assistant_commands_returns_parse_result_without_writing_events(
         "confidence": 0.8,
         "text": "查看今天提醒",
         "parameters": {"range": "today"},
+        "message": "找到 0 个日程。",
+        "events": [],
     }
 
     with TestingSessionLocal() as session:
         assert session.scalars(select(Event)).all() == []
+
+
+def test_assistant_list_command_returns_current_user_events(monkeypatch) -> None:
+    TestingSessionLocal = build_test_session()
+    with TestingSessionLocal() as session:
+        session.add(User(username="octocat", is_guest=False))
+        session.add(User(username="other", is_guest=False))
+        session.flush()
+        session.add_all(
+            [
+                Event(
+                    user_id=1,
+                    title="产品评审",
+                    starts_at=datetime(2026, 6, 1, 9, 30),
+                ),
+                Event(
+                    user_id=2,
+                    title="其他用户日程",
+                    starts_at=datetime(2026, 6, 1, 10, 30),
+                ),
+            ]
+        )
+        session.commit()
+
+    monkeypatch.setattr("app.routes.assistant.SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr("app.routes.auth.get_settings", auth_settings)
+    token = create_access_token("1", auth_settings())
+    client = TestClient(app)
+
+    response = client.post(
+        "/assistant/commands",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": "列出提醒"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "list_events",
+        "confidence": 0.8,
+        "text": "列出提醒",
+        "parameters": {},
+        "message": "找到 1 个日程。",
+        "events": [
+            {
+                "id": 1,
+                "title": "产品评审",
+                "starts_at": "2026-06-01T09:30:00",
+                "status": "scheduled",
+            }
+        ],
+    }
 
 
 def test_assistant_add_command_creates_event(monkeypatch) -> None:
