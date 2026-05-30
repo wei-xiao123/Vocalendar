@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -88,5 +88,24 @@ def list_events(
             statement = statement.where(Event.starts_at <= starts_to)
         statement = statement.order_by(Event.starts_at.asc(), Event.id.asc())
         return [_to_event_response(event) for event in session.scalars(statement)]
+    finally:
+        session.close()
+
+
+@router.delete("/{event_id}", status_code=204)
+def delete_event(
+    event_id: int,
+    authorization: str | None = Header(default=None),
+) -> Response:
+    token = _extract_bearer_token(authorization)
+    session = SessionLocal()
+    try:
+        user = _get_user_from_access_token(session, token)
+        event = session.get(Event, event_id)
+        if event is None or event.user_id != user.id:
+            raise HTTPException(status_code=404, detail="Event not found")
+        session.delete(event)
+        session.commit()
+        return Response(status_code=204)
     finally:
         session.close()
