@@ -6,6 +6,7 @@ import {
   type CalendarEvent,
   createEvent,
   createGuestSession,
+  deleteEvent,
   getGitHubOAuthStartUrl,
   listEvents,
 } from './lib/api'
@@ -157,6 +158,10 @@ function EventList({ accessToken }: { accessToken: string }) {
   const [startsAt, setStartsAt] = useState('')
   const [isCreatingEvent, setIsCreatingEvent] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+  const [deletingEventIds, setDeletingEventIds] = useState<Set<number>>(
+    () => new Set(),
+  )
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   useEffect(() => {
     let isCurrent = true
@@ -222,6 +227,27 @@ function EventList({ accessToken }: { accessToken: string }) {
     }
   }
 
+  async function handleDeleteEvent(eventId: number) {
+    setDeleteError(null)
+    setDeletingEventIds((current) => new Set(current).add(eventId))
+
+    try {
+      await deleteEvent(eventId, accessToken)
+      setEventListState((current) => ({
+        ...current,
+        events: current.events.filter((event) => event.id !== eventId),
+      }))
+    } catch {
+      setDeleteError('日程删除失败，请稍后重试。')
+    } finally {
+      setDeletingEventIds((current) => {
+        const nextIds = new Set(current)
+        nextIds.delete(eventId)
+        return nextIds
+      })
+    }
+  }
+
   return (
     <section className="events-panel" aria-labelledby="events-title">
       <div className="section-header">
@@ -267,6 +293,11 @@ function EventList({ accessToken }: { accessToken: string }) {
           {createError}
         </p>
       ) : null}
+      {deleteError ? (
+        <p className="error-message form-error" role="alert">
+          {deleteError}
+        </p>
+      ) : null}
 
       {isLoadingEvents ? (
         <p className="state-message">正在加载日程...</p>
@@ -284,7 +315,18 @@ function EventList({ accessToken }: { accessToken: string }) {
                   {formatEventTime(event.starts_at, event.ends_at)}
                 </p>
               </div>
-              <span className="event-status">{event.status}</span>
+              <div className="event-actions">
+                <span className="event-status">{event.status}</span>
+                <button
+                  aria-label={`删除 ${event.title}`}
+                  className="danger-button"
+                  disabled={deletingEventIds.has(event.id)}
+                  onClick={() => void handleDeleteEvent(event.id)}
+                  type="button"
+                >
+                  {deletingEventIds.has(event.id) ? '删除中...' : '删除'}
+                </button>
+              </div>
             </li>
           ))}
         </ul>
