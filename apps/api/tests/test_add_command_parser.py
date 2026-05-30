@@ -32,7 +32,7 @@ def test_parse_add_command_without_datetime() -> None:
 
 
 def test_parse_non_add_command_stays_unknown() -> None:
-    result = parse_assistant_command("查看今天提醒")
+    result = parse_assistant_command("删除今天提醒")
 
     assert result.action == "unknown"
     assert result.parameters == {}

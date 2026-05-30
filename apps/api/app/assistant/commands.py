@@ -10,6 +10,13 @@ ADD_COMMAND_PREFIXES = (
     "提醒我",
     "帮我添加提醒",
 )
+LIST_COMMAND_KEYWORDS = ("查看", "列出", "有哪些")
+LIST_COMMAND_OBJECTS = ("提醒", "日程")
+LIST_RANGE_KEYWORDS = {
+    "今天": "today",
+    "明天": "tomorrow",
+    "全部": "all",
+}
 DATETIME_PATTERN = re.compile(
     r"(?P<datetime>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?)"
 )
@@ -31,6 +38,10 @@ def parse_assistant_command(text: str) -> AssistantCommandResponse:
     add_payload = _strip_add_command_prefix(normalized_text)
     if add_payload is not None:
         return _parse_add_command(normalized_text, add_payload)
+
+    list_command = _parse_list_command(normalized_text)
+    if list_command is not None:
+        return list_command
 
     return AssistantCommandResponse(
         action="unknown",
@@ -66,6 +77,26 @@ def _parse_add_command(original_text: str, payload: str) -> AssistantCommandResp
         action="add_event",
         confidence=0.85 if parameters else 0.6,
         text=original_text,
+        parameters=parameters,
+    )
+
+
+def _parse_list_command(text: str) -> AssistantCommandResponse | None:
+    has_list_intent = any(keyword in text for keyword in LIST_COMMAND_KEYWORDS)
+    has_list_object = any(keyword in text for keyword in LIST_COMMAND_OBJECTS)
+    if not has_list_intent or not has_list_object:
+        return None
+
+    parameters: dict[str, str] = {}
+    for keyword, value in LIST_RANGE_KEYWORDS.items():
+        if keyword in text:
+            parameters["range"] = value
+            break
+
+    return AssistantCommandResponse(
+        action="list_events",
+        confidence=0.8,
+        text=text,
         parameters=parameters,
     )
 
