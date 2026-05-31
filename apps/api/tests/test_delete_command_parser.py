@@ -17,6 +17,16 @@ def test_parse_cancel_command_with_title() -> None:
     assert result.parameters == {"title": "客户电话"}
 
 
+def test_parse_delete_command_with_relative_date_words() -> None:
+    result = parse_assistant_command("删除明天的产品评审提醒")
+
+    assert result.action == "delete_event"
+    assert result.parameters == {
+        "range": "tomorrow",
+        "title": "产品评审",
+    }
+
+
 def test_parse_delete_command_without_title() -> None:
     result = parse_assistant_command("删除提醒")
 

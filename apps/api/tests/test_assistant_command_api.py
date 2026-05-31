@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -114,6 +114,59 @@ def test_assistant_list_command_returns_current_user_events(monkeypatch) -> None
                 "id": 1,
                 "title": "产品评审",
                 "starts_at": "2026-06-01T09:30:00",
+                "status": "scheduled",
+            }
+        ],
+    }
+
+
+def test_assistant_list_command_filters_day_after_tomorrow(monkeypatch) -> None:
+    TestingSessionLocal = build_test_session()
+    today = date.today()
+    target_datetime = datetime.combine(today + timedelta(days=2), datetime.min.time())
+    other_datetime = datetime.combine(today + timedelta(days=1), datetime.min.time())
+    with TestingSessionLocal() as session:
+        session.add(User(username="octocat", is_guest=False))
+        session.flush()
+        session.add_all(
+            [
+                Event(
+                    user_id=1,
+                    title="后天会议",
+                    starts_at=target_datetime.replace(hour=9, minute=30),
+                ),
+                Event(
+                    user_id=1,
+                    title="明天会议",
+                    starts_at=other_datetime.replace(hour=9, minute=30),
+                ),
+            ]
+        )
+        session.commit()
+
+    monkeypatch.setattr("app.routes.assistant.SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr("app.routes.auth.get_settings", auth_settings)
+    token = create_access_token("1", auth_settings())
+    client = TestClient(app)
+
+    response = client.post(
+        "/assistant/commands",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": "看看后天日程"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "list_events",
+        "confidence": 0.8,
+        "text": "看看后天日程",
+        "parameters": {"range": "day_after_tomorrow"},
+        "message": "找到 1 个日程。",
+        "events": [
+            {
+                "id": 1,
+                "title": "后天会议",
+                "starts_at": target_datetime.replace(hour=9, minute=30).isoformat(),
                 "status": "scheduled",
             }
         ],

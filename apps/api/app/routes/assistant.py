@@ -119,6 +119,8 @@ def _get_range_bounds(range_value: str | None) -> tuple[datetime, datetime] | No
         target_date = today
     elif range_value == "tomorrow":
         target_date = today + timedelta(days=1)
+    elif range_value == "day_after_tomorrow":
+        target_date = today + timedelta(days=2)
     else:
         return None
 
