@@ -1,6 +1,7 @@
 # Vocalendar
 
 Vocalendar 是一个语音优先的日历助手。用户可以通过自然语言创建、查看和删除日程，并将日程同步到 Google Calendar。
+演示视频链接：https://www.bilibili.com/video/BV1vPVQ6BEY5/?vd_source=7aed16e1eedfa07381030114d86eee9d
 
 项目采用 monorepo 结构：
 
@@ -161,53 +162,6 @@ cd apps/api
 
 如果使用 SQLite 本地开发，首次运行接口前也可以执行迁移，确保表结构完整。
 
-## Render 部署
-
-仓库包含 `render.yaml`，可以在 Render 中通过 Blueprint 创建：
-
-- `vocalendar-web`：Static Site
-- `vocalendar-api`：Python Web Service
-- `vocalendar-db`：PostgreSQL
-
-部署时需要设置生产环境变量。
-
-前端：
-
-```text
-VITE_API_URL=https://你的后端地址.onrender.com
-```
-
-后端：
-
-```text
-API_ENV=production
-API_CORS_ORIGINS=https://你的前端地址.onrender.com
-WEB_APP_URL=https://你的前端地址.onrender.com/
-GITHUB_CLIENT_ID=你的 GitHub OAuth Client ID
-GITHUB_CLIENT_SECRET=你的 GitHub OAuth Client Secret
-GITHUB_OAUTH_REDIRECT_URI=https://你的后端地址.onrender.com/auth/github/callback
-GOOGLE_CLIENT_ID=你的 Google OAuth Client ID
-GOOGLE_CLIENT_SECRET=你的 Google OAuth Client Secret
-GOOGLE_OAUTH_REDIRECT_URI=https://你的后端地址.onrender.com/integrations/google/callback
-JWT_SECRET=生产强密钥
-TOKEN_ENCRYPTION_SECRET=生产强密钥
-CALENDAR_TIME_ZONE=Asia/Shanghai
-DATABASE_URL=Render PostgreSQL 自动注入
-```
-
-生产 OAuth 平台也要配置对应的 HTTPS 回调地址。
-
-首次部署后需要执行数据库迁移：
-
-```powershell
-alembic upgrade head
-```
-
-也可以将 API 的 Render Build Command 调整为：
-
-```text
-pip install -e ".[dev]" && alembic upgrade head
-```
 
 ## 语音命令示例
 
