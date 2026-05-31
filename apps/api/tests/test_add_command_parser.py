@@ -153,7 +153,20 @@ def test_parse_add_command_with_relative_offset_alarm_and_title() -> None:
     assert result.action == "add_event"
     assert result.parameters == {
         "starts_at": "2026-05-31T19:42:00",
-        "title": "去开会",
+        "title": "开会",
+    }
+
+
+def test_parse_add_command_infers_meeting_title_from_alarm_request() -> None:
+    result = parse_assistant_command(
+        "我明天下午3点和张三开会，你帮我设置一个闹钟",
+        now=datetime(2026, 5, 30, 10),
+    )
+
+    assert result.action == "add_event"
+    assert result.parameters == {
+        "starts_at": "2026-05-31T15:00:00",
+        "title": "开会",
     }
 
 

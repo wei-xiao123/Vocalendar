@@ -20,6 +20,20 @@ import { type UiCalendarEvent } from '../types'
 import { CalendarDrawer } from './CalendarDrawer'
 import { VoiceOrb } from './VoiceOrb'
 
+const COMMAND_HINTS = [
+  { icon: 'calendar', text: '明天下午3点和张三开会' },
+  { icon: 'list', text: '取消这周末所有日程' },
+  { icon: 'clock', text: '后天有什么安排？' },
+  { icon: 'calendar', text: '我明天下午3点和张三开会，你帮我设置一个闹钟' },
+  { icon: 'list', text: '把刚刚那个闹钟日程给删掉' },
+  { icon: 'clock', text: '查看今天提醒' },
+  { icon: 'calendar', text: '下周三上午10点产品评审' },
+  { icon: 'list', text: '删除明天的产品评审提醒' },
+  { icon: 'clock', text: '下周三有哪些日程？' },
+] as const
+
+const COMMAND_HINT_COUNT = 3
+
 type GoogleConnectionViewState = {
   calendarId: string | null
   connected: boolean
@@ -118,6 +132,7 @@ export function MainHub({
   const [hasDismissedGooglePrompt, setHasDismissedGooglePrompt] =
     useState(false)
   const [commandText, setCommandText] = useState('')
+  const [commandHintStartIndex, setCommandHintStartIndex] = useState(0)
   const [isRequestingPermission, setIsRequestingPermission] = useState(false)
   const highlightedEventId = assistantResponse?.event?.id
     ? String(assistantResponse.event.id)
@@ -187,7 +202,7 @@ export function MainHub({
             <span className="font-serif text-2xl font-bold text-[#3D362D]">V</span>
           </div>
           <span className="text-[26px] font-semibold tracking-tight text-[#332F2A]">
-            Vocalendar <span className="font-serif font-light text-[#A3B0A5]">AI</span>
+            Vocalendar
           </span>
         </div>
 
@@ -260,13 +275,22 @@ export function MainHub({
             </div>
 
             <div className="space-y-3">
-              <CommandHint icon={<CalendarIcon className="h-4 w-4" />} text="明天下午3点和张三开会" />
-              <CommandHint icon={<ClipboardList className="h-4 w-4" />} text="取消这周末所有日程" />
-              <CommandHint icon={<Clock className="h-4 w-4" />} text="后天有什么安排？" />
+              {getVisibleCommandHints(commandHintStartIndex).map((hint) => (
+                <CommandHint
+                  icon={getCommandHintIcon(hint.icon)}
+                  key={hint.text}
+                  text={hint.text}
+                />
+              ))}
             </div>
 
             <button
               className="mt-5 flex items-center justify-center gap-1.5 text-[12px] font-medium text-[#72A684] transition-colors hover:text-[#5C896C]"
+              onClick={() =>
+                setCommandHintStartIndex(
+                  (current) => (current + COMMAND_HINT_COUNT) % COMMAND_HINTS.length,
+                )
+              }
               type="button"
             >
               换一换
@@ -613,6 +637,23 @@ function CommandHint({ icon, text }: { icon: React.ReactNode; text: string }) {
       “{text}”
     </div>
   )
+}
+
+function getVisibleCommandHints(startIndex: number) {
+  return Array.from({ length: COMMAND_HINT_COUNT }, (_, offset) => {
+    return COMMAND_HINTS[(startIndex + offset) % COMMAND_HINTS.length]
+  })
+}
+
+function getCommandHintIcon(icon: (typeof COMMAND_HINTS)[number]['icon']) {
+  switch (icon) {
+    case 'calendar':
+      return <CalendarIcon className="h-4 w-4" />
+    case 'list':
+      return <ClipboardList className="h-4 w-4" />
+    case 'clock':
+      return <Clock className="h-4 w-4" />
+  }
 }
 
 function ControlRow({

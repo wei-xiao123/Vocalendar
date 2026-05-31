@@ -78,6 +78,9 @@ export function useSpeechRecognition(
     lang = 'zh-CN',
   } = options
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
+  const restartTimeoutRef = useRef<number | null>(null)
+  const startRecognitionRef = useRef<() => void>(() => {})
+  const shouldListenRef = useRef(false)
   const [transcript, setTranscript] = useState('')
   const [interimTranscript, setInterimTranscript] = useState('')
   const [status, setStatus] = useState<SpeechRecognitionStatus>('idle')
@@ -87,13 +90,15 @@ export function useSpeechRecognition(
     return window.SpeechRecognition ?? window.webkitSpeechRecognition ?? null
   }, [])
 
-  const stop = useCallback(() => {
-    recognitionRef.current?.stop()
-    recognitionRef.current = null
-    setStatus((current) => (current === 'unsupported' ? current : 'idle'))
+  const clearRestartTimeout = useCallback(() => {
+    if (restartTimeoutRef.current === null) {
+      return
+    }
+    window.clearTimeout(restartTimeoutRef.current)
+    restartTimeoutRef.current = null
   }, [])
 
-  const start = useCallback(() => {
+  const startRecognition = useCallback(() => {
     const RecognitionConstructor = getRecognitionConstructor()
     if (!RecognitionConstructor) {
       setStatus('unsupported')
@@ -101,6 +106,8 @@ export function useSpeechRecognition(
       return
     }
 
+    shouldListenRef.current = true
+    clearRestartTimeout()
     recognitionRef.current?.abort()
 
     const recognition = new RecognitionConstructor()
@@ -129,12 +136,32 @@ export function useSpeechRecognition(
       setInterimTranscript(nextInterimParts.join(''))
     }
     recognition.onerror = (event) => {
+      if (isTransientRecognitionError(event.error)) {
+        setErrorMessage(null)
+        setStatus('listening')
+        return
+      }
+      shouldListenRef.current = false
+      clearRestartTimeout()
       setStatus('error')
       setErrorMessage(getSpeechRecognitionErrorMessage(event))
     }
     recognition.onend = () => {
-      setStatus((current) => (current === 'error' ? current : 'idle'))
+      if (recognitionRef.current !== recognition) {
+        return
+      }
       recognitionRef.current = null
+      if (shouldListenRef.current) {
+        clearRestartTimeout()
+        restartTimeoutRef.current = window.setTimeout(() => {
+          restartTimeoutRef.current = null
+          if (shouldListenRef.current) {
+            startRecognitionRef.current()
+          }
+        }, 250)
+        return
+      }
+      setStatus((current) => (current === 'error' ? current : 'idle'))
     }
 
     recognitionRef.current = recognition
@@ -143,14 +170,39 @@ export function useSpeechRecognition(
     setErrorMessage(null)
     setStatus('listening')
     recognition.start()
-  }, [continuous, getRecognitionConstructor, interimResults, lang])
+  }, [
+    clearRestartTimeout,
+    continuous,
+    getRecognitionConstructor,
+    interimResults,
+    lang,
+  ])
+
+  useEffect(() => {
+    startRecognitionRef.current = startRecognition
+  }, [startRecognition])
+
+  const stop = useCallback(() => {
+    shouldListenRef.current = false
+    clearRestartTimeout()
+    recognitionRef.current?.stop()
+    recognitionRef.current = null
+    setStatus((current) => (current === 'unsupported' ? current : 'idle'))
+  }, [clearRestartTimeout])
+
+  const start = useCallback(() => {
+    shouldListenRef.current = true
+    startRecognition()
+  }, [startRecognition])
 
   useEffect(() => {
     return () => {
+      shouldListenRef.current = false
+      clearRestartTimeout()
       recognitionRef.current?.abort()
       recognitionRef.current = null
     }
-  }, [])
+  }, [clearRestartTimeout])
 
   return {
     errorMessage,
@@ -167,6 +219,9 @@ export function useSpeechRecognition(
 function getSpeechRecognitionErrorMessage(
   event: SpeechRecognitionErrorEventLike,
 ): string {
+  if (isTransientRecognitionError(event.error)) {
+    return '语音识别已中断，请重试。'
+  }
   if (event.message) {
     return event.message
   }
@@ -184,4 +239,8 @@ function getSpeechRecognitionErrorMessage(
     default:
       return event.error || '语音识别失败。'
   }
+}
+
+function isTransientRecognitionError(error: string | undefined): boolean {
+  return error === 'aborted' || error === 'network' || error === 'no-speech'
 }
