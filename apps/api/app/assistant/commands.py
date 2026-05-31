@@ -25,9 +25,11 @@ ADD_COMMAND_KEYWORDS = (
     "设置",
     "闹钟",
     "闹铃",
+    "响铃",
 )
 LIST_COMMAND_KEYWORDS = ("查看", "列出", "有哪些", "有什么", "查一下", "看看")
 LIST_COMMAND_OBJECTS = ("提醒", "日程", "安排")
+SCHEDULE_ACTION_KEYWORDS = ("开会", "会议", "电话", "面试", "评审", "复盘")
 LIST_RANGE_KEYWORDS = {
     "今天": "today",
     "明天": "tomorrow",
@@ -183,7 +185,24 @@ def _extract_add_command_payload(text: str) -> str | None:
 
     if any(keyword in text for keyword in ADD_COMMAND_KEYWORDS):
         return text
+    if _has_schedule_datetime_reference(text) and any(
+        keyword in text for keyword in SCHEDULE_ACTION_KEYWORDS
+    ):
+        return text
     return None
+
+
+def _has_schedule_datetime_reference(text: str) -> bool:
+    return any(
+        pattern.search(text) is not None
+        for pattern in (
+            DATETIME_PATTERN,
+            RELATIVE_DATETIME_PATTERN,
+            WEEKDAY_DATETIME_PATTERN,
+            TODAY_TIME_PATTERN,
+            RELATIVE_OFFSET_DATETIME_PATTERN,
+        )
+    )
 
 
 def _parse_add_command(
@@ -193,7 +212,7 @@ def _parse_add_command(
 ) -> AssistantCommandResponse:
     parameters: dict[str, str] = {}
     remaining_title = payload
-    has_alarm_object = "闹钟" in original_text or "闹铃" in original_text
+    has_alarm_object = _has_alarm_reference(original_text)
     reminder_offset = _extract_reminder_offset(payload)
     if reminder_offset is not None:
         remaining_title = (
@@ -581,15 +600,23 @@ def _extract_compact_event_title(title: str) -> str:
 
 
 def _clean_delete_title(value: str) -> str:
+    has_alarm_reference = _has_alarm_reference(value)
     title = _remove_relative_date_words(value)
     for phrase in (
         "帮我",
         "我说",
+        "让它",
         "请",
         "把",
         "给",
         "刚刚",
         "刚才",
+        "添加的",
+        "添加",
+        "新增的",
+        "新增",
+        "创建的",
+        "创建",
         "那个",
         "这个",
         "删除",
@@ -600,7 +627,15 @@ def _clean_delete_title(value: str) -> str:
     title = _normalize_title_text(title)
     for suffix in ("提醒", "日程"):
         title = _strip_title_edges(title.removesuffix(suffix))
+    if has_alarm_reference and (
+        title in {"", "响铃", "响铃的"} or _has_alarm_reference(title)
+    ):
+        return "闹钟"
     return title
+
+
+def _has_alarm_reference(value: str) -> bool:
+    return any(keyword in value for keyword in ("闹钟", "闹铃", "响铃"))
 
 
 def _remove_relative_date_words(value: str) -> str:

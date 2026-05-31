@@ -455,6 +455,52 @@ def test_assistant_delete_command_deletes_colloquial_alarm(monkeypatch) -> None:
         assert session.scalars(select(Event)).all() == []
 
 
+def test_assistant_delete_command_deletes_ring_alarm_alias(monkeypatch) -> None:
+    TestingSessionLocal = build_test_session()
+    with TestingSessionLocal() as session:
+        session.add(User(username="octocat", is_guest=False))
+        session.flush()
+        session.add(
+            Event(
+                user_id=1,
+                title="添 响铃",
+                starts_at=datetime(2026, 5, 31, 21, 44),
+                source_text="帮我添加一个一分钟后响铃的闹钟。",
+            )
+        )
+        session.commit()
+
+    monkeypatch.setattr("app.routes.assistant.SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr("app.routes.auth.get_settings", auth_settings)
+    token = create_access_token("1", auth_settings())
+    client = TestClient(app)
+
+    response = client.post(
+        "/assistant/commands",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": "把刚刚那个响铃的日程给删掉"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "delete_event",
+        "confidence": 0.85,
+        "text": "把刚刚那个响铃的日程给删掉",
+        "parameters": {"title": "闹钟"},
+        "message": "已删除日程。",
+        "event": {
+            "id": 1,
+            "title": "添 响铃",
+            "starts_at": "2026-05-31T21:44:00",
+            "status": "scheduled",
+            "source_text": "帮我添加一个一分钟后响铃的闹钟。",
+        },
+    }
+
+    with TestingSessionLocal() as session:
+        assert session.scalars(select(Event)).all() == []
+
+
 def test_assistant_delete_command_filters_by_range(monkeypatch) -> None:
     TestingSessionLocal = build_test_session()
     today = date.today()

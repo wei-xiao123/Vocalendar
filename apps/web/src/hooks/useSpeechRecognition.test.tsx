@@ -153,6 +153,30 @@ it('captures interim and final transcripts', () => {
   expect(result.current.transcript).toBe('明天上午开会')
 })
 
+it('resets captured transcripts', () => {
+  const { result } = renderHook(() => useSpeechRecognition())
+
+  act(() => {
+    result.current.start()
+  })
+  act(() => {
+    FakeSpeechRecognition.latest?.emitResult([
+      { isFinal: true, transcript: '查看提醒' },
+      { isFinal: false, transcript: '明天下午' },
+    ])
+  })
+
+  expect(result.current.transcript).toBe('查看提醒')
+  expect(result.current.interimTranscript).toBe('明天下午')
+
+  act(() => {
+    result.current.resetTranscript()
+  })
+
+  expect(result.current.transcript).toBe('')
+  expect(result.current.interimTranscript).toBe('')
+})
+
 it('stops recognition and returns to idle', () => {
   const { result } = renderHook(() => useSpeechRecognition())
 

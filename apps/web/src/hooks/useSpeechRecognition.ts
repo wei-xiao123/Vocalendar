@@ -62,6 +62,7 @@ export type UseSpeechRecognitionResult = {
   errorMessage: string | null
   interimTranscript: string
   isListening: boolean
+  resetTranscript: () => void
   isSupported: boolean
   start: () => void
   status: SpeechRecognitionStatus
@@ -96,6 +97,11 @@ export function useSpeechRecognition(
     }
     window.clearTimeout(restartTimeoutRef.current)
     restartTimeoutRef.current = null
+  }, [])
+
+  const resetTranscript = useCallback(() => {
+    setTranscript('')
+    setInterimTranscript('')
   }, [])
 
   const scheduleRecognitionRestart = useCallback(
@@ -224,6 +230,7 @@ export function useSpeechRecognition(
     errorMessage,
     interimTranscript,
     isListening: status === 'listening',
+    resetTranscript,
     isSupported: getRecognitionConstructor() !== null,
     start,
     status,

@@ -118,14 +118,14 @@ def _delete_event_from_command(
         parsed_command.message = "缺少要删除的日程标题。"
         return parsed_command
 
-    statement = select(Event).where(Event.user_id == user_id, Event.title == title)
+    statement = select(Event).where(Event.user_id == user_id)
     range_bounds = _get_range_bounds(parsed_command.parameters)
     if range_bounds is not None:
         starts_from, starts_to = range_bounds
         statement = statement.where(Event.starts_at >= starts_from)
         statement = statement.where(Event.starts_at <= starts_to)
     statement = statement.order_by(Event.starts_at.asc(), Event.id.asc())
-    events = session.scalars(statement).all()
+    events = _filter_delete_candidates(session.scalars(statement).all(), title)
     if not events:
         parsed_command.message = "未找到匹配日程。"
         return parsed_command
@@ -143,6 +143,45 @@ def _delete_event_from_command(
         return parsed_command
     parsed_command.message = "已删除日程。"
     return parsed_command
+
+
+def _filter_delete_candidates(events: list[Event], title: str) -> list[Event]:
+    normalized_title = _normalize_match_text(title)
+    if not normalized_title:
+        return []
+
+    exact_matches = [
+        event
+        for event in events
+        if _normalize_match_text(event.title) == normalized_title
+    ]
+    if exact_matches:
+        return exact_matches
+
+    aliases = _get_delete_title_aliases(normalized_title)
+    return [
+        event
+        for event in events
+        if _event_matches_any_title_alias(event, aliases)
+    ]
+
+
+def _event_matches_any_title_alias(event: Event, aliases: set[str]) -> bool:
+    searchable_text = _normalize_match_text(
+        " ".join(part for part in (event.title, event.source_text) if part),
+    )
+    return any(alias and alias in searchable_text for alias in aliases)
+
+
+def _get_delete_title_aliases(normalized_title: str) -> set[str]:
+    aliases = {normalized_title}
+    if normalized_title in {"闹钟", "闹铃", "响铃"}:
+        aliases.update({"闹钟", "闹铃", "响铃"})
+    return aliases
+
+
+def _normalize_match_text(value: str) -> str:
+    return "".join(value.split()).lower()
 
 
 def _get_range_bounds(
