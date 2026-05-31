@@ -258,6 +258,18 @@ it('renders Google Calendar connection controls for signed in users', async () =
   expect(screen.getByRole('button', { name: '连接 Google 日历' })).toBeInTheDocument()
 })
 
+it('does not reopen the Google authorization modal after a successful callback', async () => {
+  storeSession()
+  window.history.replaceState({}, '', '/?google_connected=1')
+
+  render(<App />)
+
+  expect(await screen.findByText('尚未连接 Google Calendar')).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '继续并授权' }),
+  ).not.toBeInTheDocument()
+})
+
 it('renders Google Calendar connection controls for guest users', async () => {
   createGuestSessionMock.mockResolvedValue({
     access_token: 'guest-token',
