@@ -35,6 +35,7 @@ type GoogleConnectionState = {
   calendarId: string | null
   connected: boolean
   error: string | null
+  hasLoaded: boolean
   isLoading: boolean
   lastSyncedAt: string | null
 }
@@ -65,12 +66,13 @@ const initialGoogleConnectionState: GoogleConnectionState = {
   calendarId: null,
   connected: false,
   error: null,
+  hasLoaded: false,
   isLoading: false,
   lastSyncedAt: null,
 }
 
 function App() {
-  const oauthCallbackState = getOAuthCallbackState()
+  const [oauthCallbackState] = useState(() => getOAuthCallbackState())
   const initialEventListRefreshKeyRef = useRef(
     oauthCallbackState.eventListRefreshKey,
   )
@@ -237,6 +239,7 @@ function App() {
         setGoogleConnectionState({
           ...initialGoogleConnectionState,
           error: 'Google 日历状态加载失败。',
+          hasLoaded: true,
         })
       }
     }
@@ -534,7 +537,9 @@ function App() {
       events={uiEvents}
       googleConnectionState={googleConnectionState}
       shouldPromptGoogleCalendar={
-        !oauthCallbackState.shouldSuppressGooglePrompt
+        !oauthCallbackState.shouldSuppressGooglePrompt &&
+        googleConnectionState.hasLoaded &&
+        !googleConnectionState.connected
       }
       isCreatingEvent={isCreatingEvent}
       isGuest={authToken.user.is_guest}
@@ -583,6 +588,7 @@ function toGoogleConnectionState(
     calendarId: status.calendar_id ?? null,
     connected: status.connected,
     error: status.sync_error ?? null,
+    hasLoaded: true,
     isLoading: false,
     lastSyncedAt: status.last_synced_at ?? null,
   }

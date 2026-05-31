@@ -131,6 +131,32 @@ def test_parse_add_command_with_today_afternoon_time_without_date() -> None:
     }
 
 
+def test_parse_add_command_with_relative_offset_alarm() -> None:
+    result = parse_assistant_command(
+        "帮我定一个三分钟后的闹钟。",
+        now=datetime(2026, 5, 31, 19, 40),
+    )
+
+    assert result.action == "add_event"
+    assert result.parameters == {
+        "starts_at": "2026-05-31T19:43:00",
+        "title": "闹钟",
+    }
+
+
+def test_parse_add_command_with_relative_offset_alarm_and_title() -> None:
+    result = parse_assistant_command(
+        "帮我定一个二分钟后响的闹铃我要去开会。",
+        now=datetime(2026, 5, 31, 19, 40),
+    )
+
+    assert result.action == "add_event"
+    assert result.parameters == {
+        "starts_at": "2026-05-31T19:42:00",
+        "title": "去开会",
+    }
+
+
 def test_parse_add_command_without_datetime() -> None:
     result = parse_assistant_command("新增提醒 提交周报")
 

@@ -130,7 +130,7 @@ export function useSpeechRecognition(
     }
     recognition.onerror = (event) => {
       setStatus('error')
-      setErrorMessage(event.message || event.error || '语音识别失败。')
+      setErrorMessage(getSpeechRecognitionErrorMessage(event))
     }
     recognition.onend = () => {
       setStatus((current) => (current === 'error' ? current : 'idle'))
@@ -161,5 +161,27 @@ export function useSpeechRecognition(
     status,
     stop,
     transcript,
+  }
+}
+
+function getSpeechRecognitionErrorMessage(
+  event: SpeechRecognitionErrorEventLike,
+): string {
+  if (event.message) {
+    return event.message
+  }
+
+  switch (event.error) {
+    case 'network':
+      return '语音识别网络连接失败，请检查浏览器语音服务或网络后重试。'
+    case 'not-allowed':
+    case 'service-not-allowed':
+      return '麦克风权限被拒绝，请允许浏览器使用麦克风。'
+    case 'no-speech':
+      return '没有检测到语音，请重试。'
+    case 'audio-capture':
+      return '没有检测到可用麦克风。'
+    default:
+      return event.error || '语音识别失败。'
   }
 }
