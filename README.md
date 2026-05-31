@@ -1,6 +1,7 @@
 # Vocalendar
 
 Vocalendar 是一个语音优先的日历助手。用户可以通过自然语言创建、查看和删除日程，并将日程同步到 Google Calendar。
+
 演示视频链接：https://www.bilibili.com/video/BV1vPVQ6BEY5/?vd_source=7aed16e1eedfa07381030114d86eee9d
 
 项目采用 monorepo 结构：
