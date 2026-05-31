@@ -130,7 +130,7 @@ export function useSpeechRecognition(
     }
     recognition.onerror = (event) => {
       setStatus('error')
-      setErrorMessage(event.message ?? event.error ?? '语音识别失败。')
+      setErrorMessage(event.message || event.error || '语音识别失败。')
     }
     recognition.onend = () => {
       setStatus((current) => (current === 'error' ? current : 'idle'))
