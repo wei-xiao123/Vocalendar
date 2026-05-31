@@ -11,6 +11,7 @@ type CalendarDrawerProps = {
   deleteError: string | null
   events: UiCalendarEvent[]
   highlightedEventId: string | null
+  highlightedEventIds: string[]
   isCreatingEvent: boolean
   isLoadingEvents: boolean
   isOpen: boolean
@@ -31,6 +32,7 @@ export function CalendarDrawer({
   deleteError,
   events,
   highlightedEventId,
+  highlightedEventIds,
   isCreatingEvent,
   isLoadingEvents,
   isOpen,
@@ -46,15 +48,16 @@ export function CalendarDrawer({
   const canSubmit = canCreateEvent && title.trim().length > 0 && startsAt.length > 0
 
   useEffect(() => {
-    if (isOpen && highlightedEventId && scrollRef.current) {
-      const element = document.getElementById(`event-${highlightedEventId}`)
+    const targetEventId = highlightedEventIds[0] ?? highlightedEventId
+    if (isOpen && targetEventId && scrollRef.current) {
+      const element = document.getElementById(`event-${targetEventId}`)
       if (element) {
         window.setTimeout(() => {
-          element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          element.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
         }, 100)
       }
     }
-  }, [highlightedEventId, isOpen])
+  }, [highlightedEventId, highlightedEventIds, isOpen])
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -170,6 +173,7 @@ export function CalendarDrawer({
                 deletingEventId={deletingEventId}
                 events={todayEvents}
                 highlightedEventId={highlightedEventId}
+                highlightedEventIds={highlightedEventIds}
                 label="Today"
                 markerClassName="bg-blue-500"
                 onDeleteEvent={onDeleteEvent}
@@ -178,6 +182,7 @@ export function CalendarDrawer({
                 deletingEventId={deletingEventId}
                 events={tomorrowEvents}
                 highlightedEventId={highlightedEventId}
+                highlightedEventIds={highlightedEventIds}
                 label="Tomorrow"
                 markerClassName="bg-emerald-500"
                 onDeleteEvent={onDeleteEvent}
@@ -186,6 +191,7 @@ export function CalendarDrawer({
                 deletingEventId={deletingEventId}
                 events={upcomingEvents}
                 highlightedEventId={highlightedEventId}
+                highlightedEventIds={highlightedEventIds}
                 label="Upcoming"
                 markerClassName="bg-[#C1B7AA]"
                 onDeleteEvent={onDeleteEvent}
@@ -257,6 +263,7 @@ function EventSection({
   deletingEventId,
   events,
   highlightedEventId,
+  highlightedEventIds,
   label,
   markerClassName,
   onDeleteEvent,
@@ -264,6 +271,7 @@ function EventSection({
   deletingEventId: string | null
   events: UiCalendarEvent[]
   highlightedEventId: string | null
+  highlightedEventIds: string[]
   label: string
   markerClassName: string
   onDeleteEvent: (eventId: string) => void
@@ -284,7 +292,10 @@ function EventSection({
             <EventCard
               event={event}
               isDeleting={event.id === deletingEventId}
-              isHighlighted={event.id === highlightedEventId}
+              isHighlighted={
+                event.id === highlightedEventId ||
+                highlightedEventIds.includes(event.id)
+              }
               key={event.id}
               onDelete={() => onDeleteEvent(event.id)}
             />
@@ -315,7 +326,7 @@ function EventCard({
             ? {
                 backgroundColor: [
                   'rgba(255,255,255,1)',
-                  'rgba(236,253,245,1)',
+                  'rgba(254,242,242,1)',
                   'rgba(255,255,255,1)',
                 ],
                 opacity: 1,
@@ -332,17 +343,32 @@ function EventCard({
                 y: 0,
               }
       }
-      className="relative flex items-center justify-between overflow-hidden rounded-2xl border border-neutral-100 bg-white p-4 shadow-[0_4px_20px_rgba(0,0,0,0.03)]"
+      className={[
+        'relative flex items-center justify-between overflow-hidden rounded-2xl border bg-white p-4 shadow-[0_4px_20px_rgba(0,0,0,0.03)]',
+        isHighlighted ? 'border-red-300 ring-2 ring-red-100' : 'border-neutral-100',
+      ].join(' ')}
       exit={{ height: 0, marginBottom: 0, opacity: 0, scale: 0.8, transition: { duration: 0.3 } }}
       id={`event-${event.id}`}
       initial={{ opacity: 0, y: 10 }}
       layout
       role="listitem"
     >
-      <div className={`absolute bottom-0 left-0 top-0 w-[4px] ${event.color || 'bg-blue-500'}`} />
+      <div
+        className={`absolute bottom-0 left-0 top-0 w-[4px] ${
+          isHighlighted ? 'bg-red-500' : event.color || 'bg-blue-500'
+        }`}
+      />
 
       <div className="min-w-0 pl-2">
-        <h3 className={`truncate text-sm tracking-wide ${isDeleting ? 'text-red-500 line-through' : 'font-medium text-neutral-800'}`}>
+        <h3
+          className={`truncate text-sm tracking-wide ${
+            isDeleting
+              ? 'text-red-500 line-through'
+              : isHighlighted
+                ? 'font-semibold text-red-600'
+                : 'font-medium text-neutral-800'
+          }`}
+        >
           {event.title}
         </h3>
         {event.status ? <span className="sr-only">{event.status}</span> : null}

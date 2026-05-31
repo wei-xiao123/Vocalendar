@@ -272,6 +272,7 @@ it('does not reopen the Google authorization modal after a successful callback',
 })
 
 it('does not show the Google authorization modal when the stored session is connected', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-05-31T13:08:00').getTime())
   storeSession()
   getGoogleConnectionStatusMock.mockResolvedValue({
     calendar_id: 'primary',
@@ -283,6 +284,7 @@ it('does not show the Google authorization modal when the stored session is conn
   render(<App />)
 
   expect(await screen.findByText('已连接到 Google 日历')).toBeInTheDocument()
+  expect(screen.getByText('最后同步：05/31 13:08')).toBeInTheDocument()
   expect(
     screen.queryByRole('button', { name: '继续并授权' }),
   ).not.toBeInTheDocument()
@@ -682,6 +684,18 @@ it('renders assistant command controls for signed in users', async () => {
 
 it('sends an assistant command and displays the result', async () => {
   storeSession()
+  listEventsMock.mockResolvedValue([
+    {
+      id: 7,
+      user_id: 2,
+      title: '产品评审',
+      starts_at: '2026-06-01T09:30:00',
+      ends_at: null,
+      reminder_at: null,
+      status: 'scheduled',
+      source_text: null,
+    },
+  ])
   sendAssistantCommandMock.mockResolvedValue({
     action: 'list_events',
     confidence: 0.8,
@@ -699,7 +713,7 @@ it('sends an assistant command and displays the result', async () => {
   })
 
   render(<App />)
-  await screen.findByText('还没有日程。')
+  await screen.findByText('产品评审')
 
   fireEvent.change(screen.getByLabelText('文本命令'), {
     target: { value: '查看提醒' },
@@ -708,8 +722,12 @@ it('sends an assistant command and displays the result', async () => {
 
   expect(sendAssistantCommandMock).toHaveBeenCalledWith('查看提醒', 'stored-token')
   expect(await screen.findByText('找到 1 个日程。')).toBeInTheDocument()
-  expect(screen.getByText('产品评审')).toBeInTheDocument()
+  expect(screen.getAllByText('产品评审')).not.toHaveLength(0)
   expect(screen.getByText('list_events')).toBeInTheDocument()
+  expect(screen.getByRole('list', { name: '日程列表' })).toBeInTheDocument()
+  const highlightedEvent = screen.getByRole('listitem')
+  expect(highlightedEvent.className).toContain('border-red-300')
+  expect(highlightedEvent.className).toContain('ring-red-100')
 })
 
 it('refreshes the event list after an assistant add command succeeds', async () => {
