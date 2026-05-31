@@ -56,11 +56,18 @@ RELATIVE_DATETIME_PATTERN = re.compile(
     r"(?:(?:点|时)(?P<minute>半|\d{1,2}分?|"
     r"[零〇一二两三四五六七八九十]{1,3}分?)?|[:：](?P<colon_minute>\d{1,2})))?"
 )
+TODAY_TIME_PATTERN = re.compile(
+    r"(?:大概)?(?:在)?"
+    r"(?P<period>凌晨|早上|上午|中午|下午|晚上|今晚)?"
+    r"(?P<hour>\d{1,2}|[零〇一二两三四五六七八九十]{1,3})"
+    r"(?:(?:点钟|点|时)(?P<minute>半|\d{1,2}分?|"
+    r"[零〇一二两三四五六七八九十]{1,3}分?)?|[:：](?P<colon_minute>\d{1,2}))"
+)
 REMINDER_OFFSET_PATTERN = re.compile(
     r"提前(?P<amount>\d+|[零〇一二两三四五六七八九十]{1,3})"
     r"(?P<unit>分钟|分|小时|个小时)"
 )
-TITLE_EDGE_PATTERN = re.compile(r"^[\s，,：:的]+|[\s，,：:的]+$")
+TITLE_EDGE_PATTERN = re.compile(r"^[\s，,：:的。\.]+|[\s，,：:的。\.]+$")
 
 
 class AssistantCommandRequest(BaseModel):
@@ -162,6 +169,16 @@ def _parse_add_command(
                     remaining_title[: relative_datetime_match.start()]
                     + remaining_title[relative_datetime_match.end() :]
                 ).strip(" ，,：:")
+        else:
+            today_time_match = TODAY_TIME_PATTERN.search(remaining_title)
+            if today_time_match is not None:
+                starts_at = _normalize_today_time(today_time_match, now)
+                if starts_at is not None:
+                    parameters["starts_at"] = starts_at
+                    remaining_title = (
+                        remaining_title[: today_time_match.start()]
+                        + remaining_title[today_time_match.end() :]
+                    ).strip(" ，,：:")
 
     starts_at = _parse_datetime_parameter(parameters.get("starts_at"))
     if starts_at is not None and reminder_offset is not None:
@@ -266,6 +283,31 @@ def _normalize_relative_datetime(
     ).isoformat()
 
 
+def _normalize_today_time(
+    match: re.Match[str],
+    now: datetime,
+) -> str | None:
+    hour = _parse_zh_number(match.group("hour"))
+    if hour is None:
+        return None
+
+    minute = _parse_minute(match.group("minute"), match.group("colon_minute"))
+    if minute is None:
+        return None
+
+    hour = _apply_period(hour, match.group("period"))
+    if hour > 23 or minute > 59:
+        return None
+
+    parsed = datetime.combine(now.date(), datetime.min.time()).replace(
+        hour=hour,
+        minute=minute,
+    )
+    if match.group("period") is None and parsed <= now and hour < 12:
+        parsed = parsed.replace(hour=hour + 12)
+    return parsed.isoformat()
+
+
 def _parse_minute(minute_text: str | None, colon_minute_text: str | None) -> int | None:
     if colon_minute_text is not None:
         return int(colon_minute_text)
@@ -346,8 +388,16 @@ def _clean_add_title(value: str) -> str:
         "添加提醒",
         "新增提醒",
         "创建提醒",
+        "日志提醒",
+        "日程提醒",
+        "我现在",
+        "有一个",
+        "有个",
+        "要开",
+        "你给我",
         "帮我",
         "提醒我",
+        "提醒",
         "加一个",
         "加个",
         "添加",
