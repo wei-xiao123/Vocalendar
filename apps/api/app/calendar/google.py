@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
@@ -187,14 +188,21 @@ def create_google_event(
     ends_at: datetime | None,
     settings: Settings | None = None,
 ) -> GoogleCalendarEvent:
+    resolved_settings = settings or get_settings()
     response = _authorized_request(
         "POST",
         f"/calendars/{connection.calendar_id}/events",
         connection=connection,
         json={
             "summary": title,
-            "start": {"dateTime": _to_google_datetime(starts_at)},
-            "end": {"dateTime": _to_google_datetime(ends_at or starts_at)},
+            "start": _to_google_datetime_payload(
+                starts_at,
+                resolved_settings.calendar_time_zone,
+            ),
+            "end": _to_google_datetime_payload(
+                ends_at or starts_at,
+                resolved_settings.calendar_time_zone,
+            ),
             "reminders": {"useDefault": True},
         },
         settings=settings,
@@ -309,10 +317,27 @@ def _parse_google_datetime(payload: dict[str, Any]) -> datetime | None:
     return None
 
 
-def _to_google_datetime(value: datetime) -> str:
+def _to_google_datetime_payload(value: datetime, time_zone: str) -> dict[str, str]:
     if value.tzinfo is None:
-        return value.replace(tzinfo=UTC).isoformat()
-    return value.astimezone(UTC).isoformat()
+        return {
+            "dateTime": value.isoformat(),
+            "timeZone": _resolve_time_zone_name(time_zone),
+        }
+    return {
+        "dateTime": value.astimezone(_resolve_time_zone(time_zone)).isoformat(),
+        "timeZone": _resolve_time_zone_name(time_zone),
+    }
+
+
+def _resolve_time_zone_name(time_zone: str) -> str:
+    return _resolve_time_zone(time_zone).key
+
+
+def _resolve_time_zone(time_zone: str) -> ZoneInfo:
+    try:
+        return ZoneInfo(time_zone)
+    except ZoneInfoNotFoundError:
+        return ZoneInfo("UTC")
 
 
 def _to_utc_datetime(value: datetime | None) -> datetime | None:

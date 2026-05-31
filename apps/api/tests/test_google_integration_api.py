@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.calendar.google import get_valid_google_access_token
+from app.calendar.service import sync_user_calendar
 from app.crypto import encrypt_text
 from app.db import Base
 from app.main import app
@@ -222,9 +223,125 @@ def test_google_event_creation_uses_default_reminders(monkeypatch) -> None:
     assert captured_request["method"] == "POST"
     assert captured_request["json"]["summary"] == "闹钟"
     assert captured_request["json"]["start"] == {
-        "dateTime": "2026-05-31T20:29:00+00:00"
+        "dateTime": "2026-05-31T20:29:00",
+        "timeZone": "Asia/Shanghai",
     }
     assert captured_request["json"]["end"] == {
-        "dateTime": "2026-05-31T20:30:00+00:00"
+        "dateTime": "2026-05-31T20:30:00",
+        "timeZone": "Asia/Shanghai",
     }
     assert captured_request["json"]["reminders"] == {"useDefault": True}
+
+
+def test_google_event_creation_keeps_local_afternoon_time(monkeypatch) -> None:
+    from app.calendar.google import create_google_event
+
+    captured_request = {}
+    settings = integration_settings()
+    connection = CalendarConnection(
+        user_id=1,
+        provider="google",
+        calendar_id="primary",
+        access_token=encrypt_text("google-access-token", settings),
+        token_expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+
+    def fake_request(method, url, **kwargs):
+        captured_request["json"] = kwargs["json"]
+
+        class FakeResponse:
+            status_code = 201
+
+            @staticmethod
+            def json():
+                return {
+                    "id": "google-event-1",
+                    "summary": "开会",
+                    "status": "confirmed",
+                    "start": {
+                        "dateTime": "2026-06-01T15:00:00+08:00",
+                        "timeZone": "Asia/Shanghai",
+                    },
+                    "end": {
+                        "dateTime": "2026-06-01T15:01:00+08:00",
+                        "timeZone": "Asia/Shanghai",
+                    },
+                    "updated": "2026-05-31T12:00:00Z",
+                }
+
+        return FakeResponse()
+
+    monkeypatch.setattr("app.calendar.google.httpx.request", fake_request)
+
+    create_google_event(
+        connection,
+        title="开会",
+        starts_at=datetime(2026, 6, 1, 15, 0),
+        ends_at=datetime(2026, 6, 1, 15, 1),
+        settings=settings,
+    )
+
+    assert captured_request["json"]["start"] == {
+        "dateTime": "2026-06-01T15:00:00",
+        "timeZone": "Asia/Shanghai",
+    }
+    assert captured_request["json"]["end"] == {
+        "dateTime": "2026-06-01T15:01:00",
+        "timeZone": "Asia/Shanghai",
+    }
+
+
+def test_google_sync_preserves_local_timezone_time(monkeypatch) -> None:
+    TestingSessionLocal = build_test_session()
+    settings = integration_settings()
+    with TestingSessionLocal() as session:
+        session.add(User(username="octocat", is_guest=False))
+        session.add(
+            CalendarConnection(
+                user_id=1,
+                provider="google",
+                calendar_id="primary",
+                access_token=encrypt_text("google-access-token", settings),
+                token_expires_at=datetime.now(UTC) + timedelta(hours=1),
+            )
+        )
+        session.commit()
+
+    monkeypatch.setattr("app.calendar.google.get_settings", lambda: settings)
+
+    def fake_request(method, url, **kwargs):
+        class FakeResponse:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "items": [
+                        {
+                            "id": "google-event-1",
+                            "summary": "开会",
+                            "status": "confirmed",
+                            "start": {
+                                "dateTime": "2026-06-01T15:00:00+08:00",
+                                "timeZone": "Asia/Shanghai",
+                            },
+                            "end": {
+                                "dateTime": "2026-06-01T15:01:00+08:00",
+                                "timeZone": "Asia/Shanghai",
+                            },
+                            "updated": "2026-05-31T12:00:00Z",
+                        }
+                    ],
+                    "nextSyncToken": "sync-token",
+                }
+
+        return FakeResponse()
+
+    monkeypatch.setattr("app.calendar.google.httpx.request", fake_request)
+
+    with TestingSessionLocal() as session:
+        sync_user_calendar(session, 1)
+        event = session.scalars(select(Event)).one()
+
+    assert event.starts_at == datetime(2026, 6, 1, 15, 0)
+    assert event.ends_at == datetime(2026, 6, 1, 15, 1)

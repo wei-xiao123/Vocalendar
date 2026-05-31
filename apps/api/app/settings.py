@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
     google_oauth_redirect_uri: str = "http://localhost:8000/integrations/google/callback"
+    calendar_time_zone: str = "Asia/Shanghai"
     jwt_secret: str = "replace-this-in-production"
     jwt_algorithm: str = "HS256"
     token_encryption_secret: str = "replace-this-in-production"

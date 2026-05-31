@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -13,6 +14,7 @@ from app.calendar.google import (
     list_google_events,
 )
 from app.models import CalendarConnection, Event
+from app.settings import get_settings
 
 DEFAULT_EVENT_DURATION = timedelta(minutes=1)
 
@@ -192,7 +194,12 @@ def _to_naive_datetime(value: datetime | None) -> datetime | None:
         return None
     if value.tzinfo is None:
         return value
-    return value.astimezone(UTC).replace(tzinfo=None)
+    settings = get_settings()
+    try:
+        time_zone = ZoneInfo(settings.calendar_time_zone)
+    except ZoneInfoNotFoundError:
+        time_zone = UTC
+    return value.astimezone(time_zone).replace(tzinfo=None)
 
 
 def _resolve_event_end_time(
