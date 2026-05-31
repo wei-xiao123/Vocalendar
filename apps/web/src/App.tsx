@@ -24,6 +24,7 @@ import { type UiCalendarEvent } from './types'
 const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 const AUTH_STORAGE_KEY = 'vocalendar.auth'
 const MAX_REMINDER_DELAY_MS = 2_147_483_647
+const REMINDER_SOUND_DURATION_SECONDS = 5
 const REMINDER_SOUND_UNLOCK_ERROR = '提醒音启用失败，请与页面交互后重试。'
 
 type EventListState = {
@@ -123,7 +124,15 @@ function App() {
   const [assistantResponse, setAssistantResponse] =
     useState<AssistantCommandResponse | null>(null)
   const [assistantError, setAssistantError] = useState<string | null>(null)
+  const [currentTimeMs, setCurrentTimeMs] = useState(() => Date.now())
   const voiceRecognition = useSpeechRecognition()
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setCurrentTimeMs(Date.now())
+    }, 30_000)
+    return () => window.clearInterval(intervalId)
+  }, [])
 
   useEffect(() => {
     if (authToken) {
@@ -511,7 +520,9 @@ function App() {
     }
   }
 
-  const uiEvents = eventListState.events.map(toUiCalendarEvent)
+  const uiEvents = eventListState.events.map((event) =>
+    toUiCalendarEvent(event, currentTimeMs),
+  )
   const isLoadingEvents = eventListLoadingKey !== null
 
   if (!authToken) {
@@ -690,21 +701,59 @@ function useReminderNotificationScheduler(
   }, [events, onReminderTriggered, permission])
 }
 
-function toUiCalendarEvent(event: CalendarEvent): UiCalendarEvent {
+function toUiCalendarEvent(event: CalendarEvent, nowMs: number): UiCalendarEvent {
+  const displayStatus = getEventDisplayStatus(event, nowMs)
+
   return {
     color: getEventColor(event.id),
     dateStr: getRelativeDateLabel(event.starts_at),
     endTime: event.ends_at ? formatClock(event.ends_at) : '',
     hasMeetingLink: false,
     id: String(event.id),
-    location: event.source_text ?? event.status,
+    location: getEventDescription(event, displayStatus),
     reminderText: event.reminder_at ? formatReminderTime(event.reminder_at) : null,
     startTime: event.ends_at
       ? `${formatClock(event.starts_at)} - ${formatClock(event.ends_at)}`
       : formatClock(event.starts_at),
-    status: event.status,
+    status: displayStatus,
+    syncText: getEventSyncText(event),
     title: event.title,
   }
+}
+
+function getEventDisplayStatus(event: CalendarEvent, nowMs: number): string {
+  const endValue = event.ends_at ?? event.starts_at
+  const endMs = new Date(endValue).getTime()
+  if (!Number.isNaN(endMs) && endMs < nowMs) {
+    return '已结束'
+  }
+  if (event.status === 'confirmed') {
+    return '已同步'
+  }
+  if (event.status === 'cancelled') {
+    return '已取消'
+  }
+  return '待开始'
+}
+
+function getEventDescription(event: CalendarEvent, displayStatus: string): string {
+  if (event.sync_state === 'sync_failed') {
+    return event.sync_error ? `同步失败：${event.sync_error}` : '同步到 Google 失败'
+  }
+  return event.source_text ?? displayStatus
+}
+
+function getEventSyncText(event: CalendarEvent): string | null {
+  if (event.sync_state === 'synced') {
+    return '已同步到 Google 日历'
+  }
+  if (event.sync_state === 'sync_failed') {
+    return '未同步到 Google 日历'
+  }
+  if (event.sync_state === 'local_only') {
+    return '本地日程'
+  }
+  return null
 }
 
 function getEventColor(eventId: number): string {
@@ -772,15 +821,20 @@ function formatClock(value: string): string {
 }
 
 function scheduleReminderSound(audioContext: AudioContext) {
-  const beepOffsets = [0, 0.22, 0.44]
+  const beepIntervalSeconds = 0.4
+  const beepDurationSeconds = 0.16
+  const beepCount = Math.ceil(REMINDER_SOUND_DURATION_SECONDS / beepIntervalSeconds)
   const frequencies = [880, 1174, 1568]
   const startAt = audioContext.currentTime + 0.02
 
-  for (const [index, offset] of beepOffsets.entries()) {
+  for (let index = 0; index < beepCount; index += 1) {
     const oscillator = audioContext.createOscillator()
     const gainNode = audioContext.createGain()
-    const beepStart = startAt + offset
-    const beepEnd = beepStart + 0.16
+    const beepStart = startAt + index * beepIntervalSeconds
+    const beepEnd =
+      index === beepCount - 1
+        ? startAt + REMINDER_SOUND_DURATION_SECONDS
+        : beepStart + beepDurationSeconds
 
     oscillator.type = 'triangle'
     oscillator.frequency.setValueAtTime(

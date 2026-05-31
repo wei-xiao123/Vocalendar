@@ -69,6 +69,9 @@ DELETE_COMMAND_PREFIXES = (
     "取消提醒",
     "取消日程",
     "帮我删除提醒",
+    "帮我删除日程",
+    "删掉提醒",
+    "删掉日程",
 )
 DATETIME_PATTERN = re.compile(
     r"(?P<datetime>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?)"
@@ -147,6 +150,10 @@ def parse_assistant_command(
 ) -> AssistantCommandResponse:
     normalized_text = text.strip()
     reference_time = now or datetime.now()
+    delete_payload = _extract_delete_command_payload(normalized_text)
+    if delete_payload is not None:
+        return _parse_delete_command(normalized_text, delete_payload, reference_time)
+
     add_payload = _extract_add_command_payload(normalized_text)
     if add_payload is not None:
         return _parse_add_command(normalized_text, add_payload, reference_time)
@@ -154,10 +161,6 @@ def parse_assistant_command(
     list_command = _parse_list_command(normalized_text, reference_time)
     if list_command is not None:
         return list_command
-
-    delete_payload = _strip_delete_command_prefix(normalized_text)
-    if delete_payload is not None:
-        return _parse_delete_command(normalized_text, delete_payload, reference_time)
 
     return AssistantCommandResponse(
         action="unknown",
@@ -297,9 +300,20 @@ def _strip_delete_command_prefix(text: str) -> str | None:
     for prefix in DELETE_COMMAND_PREFIXES:
         if text.startswith(prefix):
             return text.removeprefix(prefix).strip(" ：:")
-    for prefix in ("删除", "取消"):
+    for prefix in ("删除", "取消", "删掉"):
         if text.startswith(prefix):
             return text.removeprefix(prefix).strip(" ：:")
+    return None
+
+
+def _extract_delete_command_payload(text: str) -> str | None:
+    prefix_payload = _strip_delete_command_prefix(text)
+    if prefix_payload is not None:
+        return prefix_payload
+
+    for keyword in ("删掉", "删除", "取消"):
+        if keyword in text:
+            return text
     return None
 
 
@@ -562,7 +576,20 @@ def _clean_add_title(value: str) -> str:
 
 def _clean_delete_title(value: str) -> str:
     title = _remove_relative_date_words(value)
-    for phrase in ("帮我",):
+    for phrase in (
+        "帮我",
+        "我说",
+        "请",
+        "把",
+        "给",
+        "刚刚",
+        "刚才",
+        "那个",
+        "这个",
+        "删除",
+        "删掉",
+        "取消",
+    ):
         title = title.replace(phrase, " ")
     title = _normalize_title_text(title)
     for suffix in ("提醒", "日程"):

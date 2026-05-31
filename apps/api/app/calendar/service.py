@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -13,6 +13,8 @@ from app.calendar.google import (
     list_google_events,
 )
 from app.models import CalendarConnection, Event
+
+DEFAULT_EVENT_DURATION = timedelta(minutes=1)
 
 
 class CalendarIntegrationError(Exception):
@@ -123,11 +125,12 @@ def create_user_event(
     source_text: str | None = None,
 ) -> Event:
     connection = get_google_connection(session, user_id)
+    resolved_ends_at = _resolve_event_end_time(starts_at, ends_at)
     event = Event(
         user_id=user_id,
         title=title,
         starts_at=starts_at,
-        ends_at=ends_at,
+        ends_at=resolved_ends_at,
         reminder_at=reminder_at,
         source_text=source_text,
     )
@@ -140,7 +143,7 @@ def create_user_event(
                 connection,
                 title=title,
                 starts_at=starts_at,
-                ends_at=ends_at,
+                ends_at=resolved_ends_at,
             )
         except GoogleCalendarError as exc:
             event.sync_state = "sync_failed"
@@ -190,3 +193,12 @@ def _to_naive_datetime(value: datetime | None) -> datetime | None:
     if value.tzinfo is None:
         return value
     return value.astimezone(UTC).replace(tzinfo=None)
+
+
+def _resolve_event_end_time(
+    starts_at: datetime,
+    ends_at: datetime | None,
+) -> datetime:
+    if ends_at is not None and ends_at > starts_at:
+        return ends_at
+    return starts_at + DEFAULT_EVENT_DURATION

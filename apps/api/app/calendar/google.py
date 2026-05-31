@@ -195,6 +195,7 @@ def create_google_event(
             "summary": title,
             "start": {"dateTime": _to_google_datetime(starts_at)},
             "end": {"dateTime": _to_google_datetime(ends_at or starts_at)},
+            "reminders": {"useDefault": True},
         },
         settings=settings,
     )

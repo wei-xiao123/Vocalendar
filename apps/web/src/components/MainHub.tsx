@@ -173,9 +173,9 @@ export function MainHub({
 
   return (
     <div className="relative flex h-screen max-h-screen flex-col justify-between overflow-hidden bg-[#F2EDE4] font-sans">
-      <div className="pointer-events-none absolute inset-0 z-0 flex h-full w-full items-center justify-center">
+      <div className="pointer-events-none absolute inset-0 z-0 h-full w-full">
         <div
-          className="h-full w-full max-w-[1600px] bg-cover bg-center bg-no-repeat opacity-80 md:bg-contain lg:bg-cover"
+          className="h-full w-full bg-cover bg-center bg-no-repeat opacity-80"
           style={{ backgroundImage: `url(${bgImage})`, backgroundPosition: 'center 60%' }}
         />
         <div className="absolute inset-0 bg-[#F6EEDF]/50 backdrop-blur-[1px]" />
@@ -425,6 +425,11 @@ export function MainHub({
                         <span className="truncate text-[11px] leading-none text-[#9A9287]">
                           <SplitText text={event.location ?? event.status ?? 'scheduled'} />
                         </span>
+                        {event.syncText ? (
+                          <span className="mt-1 truncate text-[10px] leading-none text-[#7AA68B]">
+                            <SplitText text={event.syncText} />
+                          </span>
+                        ) : null}
                       </div>
                     </div>
                   ))}

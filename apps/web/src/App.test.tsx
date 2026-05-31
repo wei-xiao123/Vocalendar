@@ -245,7 +245,7 @@ it('lists events for the restored session', async () => {
   render(<App />)
 
   expect(await screen.findByText('产品评审')).toBeInTheDocument()
-  expect(screen.getByText('scheduled')).toBeInTheDocument()
+  expect(screen.getByText('已结束')).toBeInTheDocument()
   expect(screen.getByText('1')).toBeInTheDocument()
 })
 
@@ -957,8 +957,9 @@ it('schedules reminders while the page is open after notification permission is 
     body: expect.any(String),
     tag: 'vocalendar-event-7',
   })
-  expect(oscillatorStartMock).toHaveBeenCalledTimes(3)
-  expect(oscillatorStopMock).toHaveBeenCalledTimes(3)
+  expect(oscillatorStartMock).toHaveBeenCalledTimes(13)
+  expect(oscillatorStopMock).toHaveBeenCalledTimes(13)
+  expect(oscillatorStopMock).toHaveBeenLastCalledWith(5.02)
 })
 
 it('does not schedule reminders before notification permission is granted', async () => {
