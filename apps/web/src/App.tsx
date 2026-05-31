@@ -384,6 +384,9 @@ function AssistantEventSummary({
     <div className="assistant-event">
       <p className="event-title">{event.title}</p>
       <p className="event-time">{formatEventTime(event.starts_at, event.ends_at ?? null)}</p>
+      {event.reminder_at ? (
+        <p className="event-reminder">{formatReminderTime(event.reminder_at)}</p>
+      ) : null}
     </div>
   )
 }
@@ -512,6 +515,7 @@ function EventList({
   const [isLoadingEvents, setIsLoadingEvents] = useState(true)
   const [title, setTitle] = useState('')
   const [startsAt, setStartsAt] = useState('')
+  const [reminderAt, setReminderAt] = useState('')
   const [isCreatingEvent, setIsCreatingEvent] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [deletingEventIds, setDeletingEventIds] = useState<Set<number>>(
@@ -568,6 +572,7 @@ function EventList({
         {
           title: title.trim(),
           starts_at: startsAt,
+          reminder_at: reminderAt || null,
         },
         accessToken,
       )
@@ -577,6 +582,7 @@ function EventList({
       }))
       setTitle('')
       setStartsAt('')
+      setReminderAt('')
     } catch {
       setCreateError('日程创建失败，请检查内容后重试。')
     } finally {
@@ -637,6 +643,15 @@ function EventList({
             value={startsAt}
           />
         </label>
+        <label>
+          <span>提醒时间</span>
+          <input
+            name="reminder_at"
+            onChange={(event) => setReminderAt(event.target.value)}
+            type="datetime-local"
+            value={reminderAt}
+          />
+        </label>
         <button
           className="primary-button"
           disabled={!canCreateEvent || isCreatingEvent}
@@ -671,6 +686,11 @@ function EventList({
                 <p className="event-time">
                   {formatEventTime(event.starts_at, event.ends_at)}
                 </p>
+                {event.reminder_at ? (
+                  <p className="event-reminder">
+                    {formatReminderTime(event.reminder_at)}
+                  </p>
+                ) : null}
               </div>
               <div className="event-actions">
                 <span className="event-status">{event.status}</span>
@@ -762,6 +782,10 @@ function formatEventTime(startsAt: string, endsAt: string | null): string {
   }
 
   return `${startText} - ${formatDateTime(endsAt)}`
+}
+
+function formatReminderTime(reminderAt: string): string {
+  return `提醒：${formatDateTime(reminderAt)}`
 }
 
 function formatDateTime(value: string): string {

@@ -48,6 +48,7 @@ def _create_event_from_command(
 ) -> AssistantCommandResponse:
     title = parsed_command.parameters.get("title")
     starts_at = _parse_starts_at(parsed_command.parameters.get("starts_at"))
+    reminder_at = _parse_starts_at(parsed_command.parameters.get("reminder_at"))
     if not title or starts_at is None:
         parsed_command.message = "缺少日程标题或开始时间。"
         return parsed_command
@@ -56,6 +57,7 @@ def _create_event_from_command(
         user_id=user_id,
         title=title,
         starts_at=starts_at,
+        reminder_at=reminder_at,
         source_text=parsed_command.text,
     )
     session.add(event)
