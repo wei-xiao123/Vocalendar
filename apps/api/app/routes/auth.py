@@ -9,6 +9,7 @@ from starlette.responses import RedirectResponse
 
 from app.db import SessionLocal
 from app.models import User
+from app.oauth_state import create_oauth_state, decode_oauth_state
 from app.settings import get_settings
 from app.tokens import create_access_token, decode_access_token
 
@@ -115,12 +116,21 @@ def _build_github_oauth_url(client_id: str, redirect_uri: str, state: str) -> st
 
 
 @router.get("/github/start")
-def start_github_oauth() -> RedirectResponse:
+def start_github_oauth(redirect_to: str | None = None) -> RedirectResponse:
     settings = get_settings()
     if not settings.github_oauth_configured:
         raise HTTPException(status_code=503, detail="GitHub OAuth is not configured")
 
     state = token_urlsafe(24)
+    if redirect_to:
+        state = create_oauth_state(
+            {
+                "provider": "github",
+                "csrf": state,
+                "redirect_to": redirect_to,
+            },
+            settings,
+        )
     return RedirectResponse(
         _build_github_oauth_url(
             client_id=settings.github_client_id,
@@ -194,7 +204,10 @@ def _upsert_github_user(session: Session, github_user: dict[str, object]) -> Use
 
 
 @router.get("/github/callback", response_model=AuthTokenResponse)
-def handle_github_oauth_callback(code: str) -> AuthTokenResponse:
+def handle_github_oauth_callback(
+    code: str,
+    state: str | None = None,
+) -> AuthTokenResponse | RedirectResponse:
     settings = get_settings()
     if not settings.github_oauth_configured or not settings.github_client_secret:
         raise HTTPException(status_code=503, detail="GitHub OAuth is not configured")
@@ -210,9 +223,22 @@ def handle_github_oauth_callback(code: str) -> AuthTokenResponse:
     session = SessionLocal()
     try:
         user = _upsert_github_user(session, github_user)
-        return AuthTokenResponse(
+        auth_response = AuthTokenResponse(
             access_token=create_access_token(str(user.id), settings),
             user=_to_auth_user_response(user),
         )
+        if state:
+            try:
+                state_payload = decode_oauth_state(state, settings)
+            except ValueError:
+                state_payload = {}
+            redirect_to = state_payload.get("redirect_to")
+            if isinstance(redirect_to, str) and redirect_to:
+                separator = "&" if "?" in redirect_to else "?"
+                query = urlencode({"auth_access_token": auth_response.access_token})
+                return RedirectResponse(
+                    f"{redirect_to}{separator}{query}"
+                )
+        return auth_response
     finally:
         session.close()

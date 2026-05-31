@@ -2,8 +2,11 @@ import {
   createEvent,
   createGuestSession,
   deleteEvent,
+  disconnectGoogleCalendar,
   getCurrentUser,
   getGitHubOAuthStartUrl,
+  getGoogleConnectionStatus,
+  getGoogleOAuthStartUrl,
   listEvents,
   sendAssistantCommand,
 } from './api'
@@ -25,6 +28,11 @@ afterEach(() => {
 it('builds the GitHub OAuth start URL', () => {
   expect(getGitHubOAuthStartUrl('http://localhost:8000')).toBe(
     'http://localhost:8000/auth/github/start',
+  )
+  expect(
+    getGitHubOAuthStartUrl('http://localhost:8000', 'http://localhost:5175/'),
+  ).toBe(
+    'http://localhost:8000/auth/github/start?redirect_to=http%3A%2F%2Flocalhost%3A5175%2F',
   )
 })
 
@@ -161,4 +169,50 @@ it('throws ApiError for non-ok responses', async () => {
     status: 401,
     body: { detail: 'Not authenticated' },
   })
+})
+
+it('requests Google OAuth authorization URL with bearer token', async () => {
+  const fetchMock = mockFetch({
+    payload: {
+      authorization_url: 'https://accounts.google.com/o/oauth2/v2/auth',
+    },
+  })
+
+  await expect(
+    getGoogleOAuthStartUrl('app-token', 'http://localhost:5175/'),
+  ).resolves.toBe('https://accounts.google.com/o/oauth2/v2/auth')
+
+  expect(fetchMock.mock.calls[0][0]).toBe(
+    'http://localhost:8000/integrations/google/start?redirect_to=http%3A%2F%2Flocalhost%3A5175%2F',
+  )
+  expect(fetchMock.mock.calls[0][1].method).toBe('POST')
+  expect(fetchMock.mock.calls[0][1].headers.get('Authorization')).toBe(
+    'Bearer app-token',
+  )
+})
+
+it('fetches Google connection status', async () => {
+  const fetchMock = mockFetch({
+    payload: {
+      connected: true,
+      provider: 'google',
+      calendar_id: 'primary',
+    },
+  })
+
+  await getGoogleConnectionStatus('app-token')
+
+  expect(fetchMock.mock.calls[0][0]).toBe(
+    'http://localhost:8000/integrations/google/status',
+  )
+})
+
+it('disconnects Google Calendar', async () => {
+  const fetchMock = mockFetch({ status: 204 })
+
+  await expect(disconnectGoogleCalendar('app-token')).resolves.toBeUndefined()
+  expect(fetchMock.mock.calls[0][0]).toBe(
+    'http://localhost:8000/integrations/google/connection',
+  )
+  expect(fetchMock.mock.calls[0][1].method).toBe('DELETE')
 })

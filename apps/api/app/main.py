@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes import assistant_router, auth_router, events_router
+from app.routes import assistant_router, auth_router, events_router, integrations_router
 from app.settings import get_settings
 
 
@@ -19,6 +19,7 @@ def create_app() -> FastAPI:
     app.include_router(assistant_router)
     app.include_router(auth_router)
     app.include_router(events_router)
+    app.include_router(integrations_router)
 
     @app.get("/health", tags=["system"])
     def health() -> dict[str, str]:

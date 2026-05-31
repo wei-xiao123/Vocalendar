@@ -5,6 +5,7 @@ description = "FastAPI backend for the Vocalendar voice calendar tool."
 requires-python = ">=3.11,<3.12"
 dependencies = [
   "alembic>=1.17.2",
+  "cryptography>=46.0.3",
   "fastapi>=0.124.2",
   "httpx>=0.28.1",
   "psycopg[binary]>=3.3.2",

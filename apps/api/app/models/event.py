@@ -21,6 +21,19 @@ class Event(Base):
     reminder_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="scheduled")
     source_text: Mapped[str | None] = mapped_column(Text)
+    external_provider: Mapped[str | None] = mapped_column(String(32))
+    external_calendar_id: Mapped[str | None] = mapped_column(String(255))
+    external_event_id: Mapped[str | None] = mapped_column(String(255))
+    sync_state: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="local_only",
+    )
+    sync_error: Mapped[str | None] = mapped_column(Text)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    external_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

@@ -4,6 +4,13 @@ from fastapi import APIRouter, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from app.calendar import (
+    CalendarConflictError,
+    CalendarIntegrationError,
+    create_user_event,
+    delete_user_event,
+    sync_user_calendar,
+)
 from app.db import SessionLocal
 from app.models import Event
 from app.routes.auth import (
@@ -55,7 +62,8 @@ def create_event(
     session = SessionLocal()
     try:
         user = _get_user_from_access_token(session, token)
-        event = Event(
+        event = create_user_event(
+            session,
             user_id=user.id,
             title=payload.title,
             starts_at=payload.starts_at,
@@ -63,10 +71,9 @@ def create_event(
             reminder_at=payload.reminder_at,
             source_text=payload.source_text,
         )
-        session.add(event)
-        session.commit()
-        session.refresh(event)
         return _to_event_response(event)
+    except CalendarIntegrationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     finally:
         session.close()
 
@@ -81,6 +88,7 @@ def list_events(
     session = SessionLocal()
     try:
         user = _get_user_from_access_token(session, token)
+        sync_user_calendar(session, user.id)
         statement = select(Event).where(Event.user_id == user.id)
         if starts_from is not None:
             statement = statement.where(Event.starts_at >= starts_from)
@@ -88,6 +96,8 @@ def list_events(
             statement = statement.where(Event.starts_at <= starts_to)
         statement = statement.order_by(Event.starts_at.asc(), Event.id.asc())
         return [_to_event_response(event) for event in session.scalars(statement)]
+    except CalendarIntegrationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     finally:
         session.close()
 
@@ -104,8 +114,11 @@ def delete_event(
         event = session.get(Event, event_id)
         if event is None or event.user_id != user.id:
             raise HTTPException(status_code=404, detail="Event not found")
-        session.delete(event)
-        session.commit()
+        delete_user_event(session, user_id=user.id, event=event)
         return Response(status_code=204)
+    except CalendarConflictError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except CalendarIntegrationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     finally:
         session.close()

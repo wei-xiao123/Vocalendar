@@ -7,7 +7,12 @@ import {
   createEvent,
   createGuestSession,
   deleteEvent,
+  disconnectGoogleCalendar,
+  getCurrentUser,
   getGitHubOAuthStartUrl,
+  getGoogleConnectionStatus,
+  getGoogleOAuthStartUrl,
+  type GoogleConnectionStatus,
   listEvents,
   sendAssistantCommand,
   type AssistantCommandResponse,
@@ -22,9 +27,25 @@ type EventListState = {
   error: string | null
 }
 
+type GoogleConnectionState = {
+  calendarId: string | null
+  connected: boolean
+  error: string | null
+  isLoading: boolean
+  lastSyncedAt: string | null
+}
+
 const initialEventListState: EventListState = {
   events: [],
   error: null,
+}
+
+const initialGoogleConnectionState: GoogleConnectionState = {
+  calendarId: null,
+  connected: false,
+  error: null,
+  isLoading: false,
+  lastSyncedAt: null,
 }
 
 const MAX_REMINDER_DELAY_MS = 2_147_483_647
@@ -37,6 +58,7 @@ function getInitialNotificationPermission(): NotificationPermission {
 }
 
 function App() {
+  const oauthCallbackState = getOAuthCallbackState()
   const [authToken, setAuthToken] = useState<AuthToken | null>(() => {
     const storedValue = window.localStorage.getItem(AUTH_STORAGE_KEY)
     if (!storedValue) {
@@ -51,8 +73,14 @@ function App() {
     }
   })
   const [isCreatingGuest, setIsCreatingGuest] = useState(false)
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [eventListRefreshKey, setEventListRefreshKey] = useState(0)
+  const [errorMessage, setErrorMessage] = useState<string | null>(
+    oauthCallbackState.errorMessage,
+  )
+  const [eventListRefreshKey, setEventListRefreshKey] = useState(
+    oauthCallbackState.shouldRefreshEvents ? 1 : 0,
+  )
+  const [googleConnectionState, setGoogleConnectionState] =
+    useState<GoogleConnectionState>(initialGoogleConnectionState)
   const [notificationPermission, setNotificationPermission] =
     useState<NotificationPermission>(() => getInitialNotificationPermission())
 
@@ -64,6 +92,78 @@ function App() {
 
     window.localStorage.removeItem(AUTH_STORAGE_KEY)
   }, [authToken])
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const authAccessToken = params.get('auth_access_token')
+    const hasGoogleCallback =
+      params.has('google_connected') || params.has('google_error')
+
+    if (!authAccessToken && !hasGoogleCallback) {
+      return
+    }
+
+    const nextUrl = new URL(window.location.href)
+    nextUrl.searchParams.delete('auth_access_token')
+    nextUrl.searchParams.delete('google_connected')
+    nextUrl.searchParams.delete('google_error')
+    window.history.replaceState({}, '', nextUrl.toString())
+
+    if (!authAccessToken) {
+      return
+    }
+
+    void getCurrentUser(authAccessToken)
+      .then((user) => {
+        setAuthToken({
+          access_token: authAccessToken,
+          token_type: 'bearer',
+          user,
+        })
+        setErrorMessage(null)
+      })
+      .catch(() => {
+        setErrorMessage('登录结果处理失败，请重试。')
+      })
+  }, [])
+
+  useEffect(() => {
+    if (!authToken || authToken.user.is_guest) {
+      return
+    }
+
+    const accessToken = authToken.access_token
+    let isCurrent = true
+    async function loadGoogleConnectionStatus() {
+      setGoogleConnectionState((current) => ({
+        ...current,
+        error: null,
+        isLoading: true,
+      }))
+
+      try {
+        const status = await getGoogleConnectionStatus(accessToken)
+        if (!isCurrent) {
+          return
+        }
+        setGoogleConnectionState(toGoogleConnectionState(status))
+      } catch {
+        if (!isCurrent) {
+          return
+        }
+        setGoogleConnectionState({
+          ...initialGoogleConnectionState,
+          error: 'Google 日历状态加载失败。',
+        })
+      }
+    }
+
+    void loadGoogleConnectionStatus()
+
+    return () => {
+      isCurrent = false
+    }
+  }, [authToken, eventListRefreshKey])
 
   async function handleGuestSession() {
     setIsCreatingGuest(true)
@@ -79,7 +179,7 @@ function App() {
   }
 
   function handleGitHubLogin() {
-    window.location.assign(getGitHubOAuthStartUrl())
+    window.location.assign(getGitHubOAuthStartUrl(apiUrl, getCurrentPageUrl()))
   }
 
   function handleSignOut() {
@@ -91,8 +191,65 @@ function App() {
     setEventListRefreshKey((current) => current + 1)
   }
 
+  async function handleGoogleCalendarConnect() {
+    if (!authToken || authToken.user.is_guest) {
+      return
+    }
+
+    setGoogleConnectionState((current) => ({
+      ...current,
+      error: null,
+      isLoading: true,
+    }))
+
+    try {
+      const authorizationUrl = await getGoogleOAuthStartUrl(
+        authToken.access_token,
+        getCurrentPageUrl(),
+      )
+      window.location.assign(authorizationUrl)
+    } catch {
+      setGoogleConnectionState((current) => ({
+        ...current,
+        error: 'Google 授权启动失败。',
+        isLoading: false,
+      }))
+    }
+  }
+
+  async function handleGoogleCalendarDisconnect() {
+    if (!authToken) {
+      return
+    }
+
+    setGoogleConnectionState((current) => ({
+      ...current,
+      error: null,
+      isLoading: true,
+    }))
+
+    try {
+      await disconnectGoogleCalendar(authToken.access_token)
+      setGoogleConnectionState({
+        calendarId: null,
+        connected: false,
+        error: null,
+        isLoading: false,
+        lastSyncedAt: null,
+      })
+    } catch {
+      setGoogleConnectionState((current) => ({
+        ...current,
+        error: 'Google 日历断开失败。',
+        isLoading: false,
+      }))
+    }
+  }
+
   const displayName =
     authToken?.user.display_name ?? authToken?.user.username ?? 'Guest User'
+  const effectiveGoogleConnectionState =
+    authToken?.user.is_guest ? initialGoogleConnectionState : googleConnectionState
 
   return (
     <main className="app-shell">
@@ -131,6 +288,12 @@ function App() {
               key={authToken.access_token}
               notificationPermission={notificationPermission}
               refreshKey={eventListRefreshKey}
+            />
+            <GoogleCalendarPanel
+              isGuest={authToken.user.is_guest}
+              onConnect={handleGoogleCalendarConnect}
+              onDisconnect={handleGoogleCalendarDisconnect}
+              state={effectiveGoogleConnectionState}
             />
             <AssistantCommandWorkspace
               accessToken={authToken.access_token}
@@ -175,6 +338,59 @@ function App() {
         )}
       </section>
     </main>
+  )
+}
+
+function GoogleCalendarPanel({
+  isGuest,
+  onConnect,
+  onDisconnect,
+  state,
+}: {
+  isGuest: boolean
+  onConnect: () => void
+  onDisconnect: () => void
+  state: GoogleConnectionState
+}) {
+  return (
+    <section className="session-panel" aria-labelledby="google-calendar-title">
+      <div>
+        <p className="section-label">日历集成</p>
+        <h2 id="google-calendar-title">Google Calendar</h2>
+        <p className="session-meta">
+          {isGuest
+            ? '游客模式暂不支持连接外部日历'
+            : getGoogleConnectionText(state)}
+        </p>
+        {state.lastSyncedAt ? (
+          <p className="session-meta">最近同步：{formatDateTime(state.lastSyncedAt)}</p>
+        ) : null}
+        {state.error ? (
+          <p className="error-message" role="alert">
+            {state.error}
+          </p>
+        ) : null}
+      </div>
+      {isGuest ? null : state.connected ? (
+        <button
+          className="secondary-button"
+          disabled={state.isLoading}
+          onClick={onDisconnect}
+          type="button"
+        >
+          {state.isLoading ? '处理中...' : '断开连接'}
+        </button>
+      ) : (
+        <button
+          className="primary-button"
+          disabled={state.isLoading}
+          onClick={onConnect}
+          type="button"
+        >
+          {state.isLoading ? '跳转中...' : '连接 Google 日历'}
+        </button>
+      )}
+    </section>
   )
 }
 
@@ -724,6 +940,56 @@ function getVoiceStatusText(status: string): string {
       return '异常'
     default:
       return '待机'
+  }
+}
+
+function toGoogleConnectionState(
+  status: GoogleConnectionStatus,
+): GoogleConnectionState {
+  return {
+    calendarId: status.calendar_id ?? null,
+    connected: status.connected,
+    error: status.sync_error ?? null,
+    isLoading: false,
+    lastSyncedAt: status.last_synced_at ?? null,
+  }
+}
+
+function getGoogleConnectionText(state: GoogleConnectionState): string {
+  if (state.isLoading) {
+    return '处理中'
+  }
+  if (state.connected) {
+    return `已连接 ${state.calendarId ?? 'primary'}`
+  }
+  return '尚未连接 Google Calendar'
+}
+
+function getCurrentPageUrl(): string {
+  const fallback =
+    (typeof window.location.href === 'string' && window.location.href) ||
+    (typeof window.location.origin === 'string' && window.location.origin) ||
+    'http://localhost/'
+  const url = new URL(fallback)
+  url.search = ''
+  url.hash = ''
+  return url.toString()
+}
+
+function getOAuthCallbackState(): {
+  errorMessage: string | null
+  shouldRefreshEvents: boolean
+} {
+  const params = new URLSearchParams(window.location.search)
+  if (params.get('google_error')) {
+    return {
+      errorMessage: 'Google 日历同步失败，请稍后重试。',
+      shouldRefreshEvents: false,
+    }
+  }
+  return {
+    errorMessage: null,
+    shouldRefreshEvents: params.get('google_connected') === '1',
   }
 }
 

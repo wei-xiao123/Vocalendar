@@ -17,8 +17,12 @@ class Settings(BaseSettings):
     github_client_id: str = ""
     github_client_secret: str = ""
     github_oauth_redirect_uri: str = "http://localhost:8000/auth/github/callback"
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_oauth_redirect_uri: str = "http://localhost:8000/integrations/google/callback"
     jwt_secret: str = "replace-this-in-production"
     jwt_algorithm: str = "HS256"
+    token_encryption_secret: str = "replace-this-in-production"
 
     model_config = SettingsConfigDict(
         env_file=(ROOT_DIR / ".env", API_DIR / ".env"),
@@ -47,6 +51,10 @@ class Settings(BaseSettings):
     @property
     def github_oauth_configured(self) -> bool:
         return bool(self.github_client_id.strip())
+
+    @property
+    def google_oauth_configured(self) -> bool:
+        return bool(self.google_client_id.strip())
 
 
 @lru_cache

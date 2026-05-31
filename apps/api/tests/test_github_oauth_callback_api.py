@@ -140,3 +140,45 @@ def test_github_oauth_callback_updates_existing_user(monkeypatch) -> None:
         assert len(users) == 1
         assert users[0].username == "new-name"
         assert users[0].display_name == "New Name"
+
+
+def test_github_oauth_callback_redirects_back_to_frontend(monkeypatch) -> None:
+    TestingSessionLocal = build_test_session()
+    monkeypatch.setattr("app.routes.auth.SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr("app.routes.auth.get_settings", oauth_settings)
+    monkeypatch.setattr(
+        "app.routes.auth.httpx.post",
+        lambda *_, **__: FakeResponse(200, {"access_token": "github-token"}),
+    )
+    monkeypatch.setattr(
+        "app.routes.auth.httpx.get",
+        lambda *_, **__: FakeResponse(
+            200,
+            {
+                "id": 12345,
+                "login": "octocat",
+                "name": "The Octocat",
+                "avatar_url": "https://github.com/images/error/octocat_happy.gif",
+                "email": "octocat@example.com",
+            },
+        ),
+    )
+
+    client = TestClient(app)
+    start_response = client.get(
+        "/auth/github/start",
+        params={"redirect_to": "http://localhost:5175/"},
+        follow_redirects=False,
+    )
+    state = start_response.headers["location"].split("state=")[1].split("&")[0]
+
+    response = client.get(
+        "/auth/github/callback",
+        params={"code": "oauth-code", "state": state},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    assert response.headers["location"].startswith(
+        "http://localhost:5175/?auth_access_token="
+    )
