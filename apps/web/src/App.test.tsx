@@ -211,10 +211,49 @@ it('creates an event and adds it to the list', async () => {
     {
       title: '客户电话',
       starts_at: '2026-05-31T10:00',
+      reminder_at: null,
     },
     'stored-token',
   )
   expect(await screen.findByText('客户电话')).toBeInTheDocument()
+})
+
+it('creates an event with a custom reminder time', async () => {
+  storeSession()
+  createEventMock.mockResolvedValue({
+    id: 9,
+    user_id: 2,
+    title: '产品评审',
+    starts_at: '2026-05-31T10:00',
+    ends_at: null,
+    reminder_at: '2026-05-31T09:45',
+    status: 'scheduled',
+    source_text: null,
+  })
+
+  render(<App />)
+  await screen.findByText('还没有日程。')
+
+  fireEvent.change(screen.getByLabelText('标题'), {
+    target: { value: '产品评审' },
+  })
+  fireEvent.change(screen.getByLabelText('开始时间'), {
+    target: { value: '2026-05-31T10:00' },
+  })
+  fireEvent.change(screen.getByLabelText('提醒时间'), {
+    target: { value: '2026-05-31T09:45' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: '添加日程' }))
+
+  expect(createEventMock).toHaveBeenCalledWith(
+    {
+      title: '产品评审',
+      starts_at: '2026-05-31T10:00',
+      reminder_at: '2026-05-31T09:45',
+    },
+    'stored-token',
+  )
+  expect(await screen.findByText('产品评审')).toBeInTheDocument()
 })
 
 it('shows an error when event creation fails', async () => {
@@ -533,6 +572,48 @@ it('renders browser notification permission controls', async () => {
   expect(
     screen.getByRole('button', { name: '请求通知权限' }),
   ).toBeInTheDocument()
+})
+
+it('renders reminder times in event and assistant results', async () => {
+  storeSession()
+  listEventsMock.mockResolvedValue([
+    {
+      id: 7,
+      user_id: 2,
+      title: '产品评审',
+      starts_at: '2026-05-31T09:30:00',
+      ends_at: null,
+      reminder_at: '2026-05-31T09:15:00',
+      status: 'scheduled',
+      source_text: null,
+    },
+  ])
+  sendAssistantCommandMock.mockResolvedValue({
+    action: 'add_event',
+    confidence: 0.95,
+    text: '添加提醒',
+    parameters: {},
+    message: '已添加日程。',
+    event: {
+      id: 8,
+      title: '客户电话',
+      starts_at: '2026-05-31T10:00:00',
+      reminder_at: '2026-05-31T09:45:00',
+      status: 'scheduled',
+    },
+  })
+
+  render(<App />)
+  expect(await screen.findByText('产品评审')).toBeInTheDocument()
+  expect(screen.getByText('提醒：05/31 09:15')).toBeInTheDocument()
+
+  fireEvent.change(screen.getByLabelText('文本命令'), {
+    target: { value: '添加提醒' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: '执行' }))
+
+  expect(await screen.findByText('客户电话')).toBeInTheDocument()
+  expect(screen.getByText('提醒：05/31 09:45')).toBeInTheDocument()
 })
 
 it('requests browser notification permission', async () => {

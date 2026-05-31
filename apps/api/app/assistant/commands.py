@@ -56,6 +56,10 @@ RELATIVE_DATETIME_PATTERN = re.compile(
     r"(?:(?:点|时)(?P<minute>半|\d{1,2}分?|"
     r"[零〇一二两三四五六七八九十]{1,3}分?)?|[:：](?P<colon_minute>\d{1,2})))?"
 )
+REMINDER_OFFSET_PATTERN = re.compile(
+    r"提前(?P<amount>\d+|[零〇一二两三四五六七八九十]{1,3})"
+    r"(?P<unit>分钟|分|小时|个小时)"
+)
 TITLE_EDGE_PATTERN = re.compile(r"^[\s，,：:的]+|[\s，,：:的]+$")
 
 
@@ -132,25 +136,38 @@ def _parse_add_command(
 ) -> AssistantCommandResponse:
     parameters: dict[str, str] = {}
     remaining_title = payload
+    reminder_offset = _extract_reminder_offset(payload)
+    if reminder_offset is not None:
+        remaining_title = (
+            payload[: reminder_offset.start]
+            + payload[reminder_offset.end :]
+        ).strip(" ，,：:")
 
-    datetime_match = DATETIME_PATTERN.search(payload)
+    datetime_match = DATETIME_PATTERN.search(remaining_title)
     if datetime_match is not None:
         starts_at = _normalize_datetime(datetime_match.group("datetime"))
         if starts_at is not None:
             parameters["starts_at"] = starts_at
             remaining_title = (
-                payload[: datetime_match.start()] + payload[datetime_match.end() :]
+                remaining_title[: datetime_match.start()]
+                + remaining_title[datetime_match.end() :]
             ).strip(" ，,：:")
     else:
-        relative_datetime_match = RELATIVE_DATETIME_PATTERN.search(payload)
+        relative_datetime_match = RELATIVE_DATETIME_PATTERN.search(remaining_title)
         if relative_datetime_match is not None:
             starts_at = _normalize_relative_datetime(relative_datetime_match, now)
             if starts_at is not None:
                 parameters["starts_at"] = starts_at
                 remaining_title = (
-                    payload[: relative_datetime_match.start()]
-                    + payload[relative_datetime_match.end() :]
+                    remaining_title[: relative_datetime_match.start()]
+                    + remaining_title[relative_datetime_match.end() :]
                 ).strip(" ，,：:")
+
+    starts_at = _parse_datetime_parameter(parameters.get("starts_at"))
+    if starts_at is not None and reminder_offset is not None:
+        parameters["reminder_at"] = (
+            starts_at - reminder_offset.duration
+        ).isoformat()
 
     remaining_title = _clean_add_title(remaining_title)
     if remaining_title:
@@ -205,11 +222,19 @@ def _parse_delete_command(original_text: str, payload: str) -> AssistantCommandR
 
 
 def _normalize_datetime(value: str) -> str | None:
-    try:
-        parsed = datetime.fromisoformat(value.replace(" ", "T"))
-    except ValueError:
+    parsed = _parse_datetime_parameter(value.replace(" ", "T"))
+    if parsed is None:
         return None
     return parsed.isoformat()
+
+
+def _parse_datetime_parameter(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def _normalize_relative_datetime(
@@ -251,6 +276,36 @@ def _parse_minute(minute_text: str | None, colon_minute_text: str | None) -> int
 
     normalized_minute = minute_text.removesuffix("分")
     return _parse_zh_number(normalized_minute)
+
+
+class ReminderOffset(BaseModel):
+    start: int
+    end: int
+    duration: timedelta
+
+
+def _extract_reminder_offset(value: str) -> ReminderOffset | None:
+    match = REMINDER_OFFSET_PATTERN.search(value)
+    if match is None:
+        return None
+
+    amount = _parse_zh_number(match.group("amount"))
+    if amount is None:
+        return None
+
+    unit = match.group("unit")
+    duration = timedelta(hours=amount) if "小时" in unit else timedelta(minutes=amount)
+    reminder_word_match = re.match(r"(?:提醒我|提醒)", value[match.end() :])
+    end = (
+        match.end() + reminder_word_match.end()
+        if reminder_word_match is not None
+        else match.end()
+    )
+    return ReminderOffset(
+        start=match.start(),
+        end=end,
+        duration=duration,
+    )
 
 
 def _apply_period(hour: int, period: str | None) -> int:

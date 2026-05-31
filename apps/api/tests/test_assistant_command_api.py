@@ -215,6 +215,49 @@ def test_assistant_add_command_creates_event(monkeypatch) -> None:
         assert event.title == "产品评审"
 
 
+def test_assistant_add_command_creates_event_with_reminder_time(monkeypatch) -> None:
+    TestingSessionLocal = build_test_session()
+    with TestingSessionLocal() as session:
+        session.add(User(username="octocat", is_guest=False))
+        session.commit()
+
+    monkeypatch.setattr("app.routes.assistant.SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr("app.routes.auth.get_settings", auth_settings)
+    token = create_access_token("1", auth_settings())
+    client = TestClient(app)
+
+    response = client.post(
+        "/assistant/commands",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": "添加提醒 2026-06-01 09:30 提前15分钟提醒我产品评审"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "add_event",
+        "confidence": 0.85,
+        "text": "添加提醒 2026-06-01 09:30 提前15分钟提醒我产品评审",
+        "parameters": {
+            "starts_at": "2026-06-01T09:30:00",
+            "reminder_at": "2026-06-01T09:15:00",
+            "title": "产品评审",
+        },
+        "message": "已创建日程。",
+        "event": {
+            "id": 1,
+            "title": "产品评审",
+            "starts_at": "2026-06-01T09:30:00",
+            "reminder_at": "2026-06-01T09:15:00",
+            "status": "scheduled",
+            "source_text": "添加提醒 2026-06-01 09:30 提前15分钟提醒我产品评审",
+        },
+    }
+
+    with TestingSessionLocal() as session:
+        event = session.scalars(select(Event)).one()
+        assert event.reminder_at == datetime(2026, 6, 1, 9, 15)
+
+
 def test_assistant_add_command_requires_title_and_start(monkeypatch) -> None:
     TestingSessionLocal = build_test_session()
     with TestingSessionLocal() as session:
