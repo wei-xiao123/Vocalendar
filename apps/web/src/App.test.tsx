@@ -844,6 +844,23 @@ it('enables reminder sound after user interaction', async () => {
   expect(audioContextInstances).toHaveLength(1)
   expect(audioContextInstances[0].resume).toHaveBeenCalledOnce()
   expect(screen.getByRole('button', { name: '测试提醒音' })).toBeEnabled()
+  expect(window.localStorage.getItem('vocalendar.reminderSoundEnabled')).toBe(
+    'true',
+  )
+})
+
+it('keeps reminder sound enabled after reloading the page', async () => {
+  storeSession()
+  window.localStorage.setItem('vocalendar.reminderSoundEnabled', 'true')
+
+  render(<App />)
+
+  expect(await screen.findByText('还没有日程。')).toBeInTheDocument()
+  expect(screen.getByText('已启用')).toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: '已启用提醒音' }),
+  ).toBeDisabled()
+  expect(screen.getByRole('button', { name: '测试提醒音' })).toBeEnabled()
 })
 
 it('renders reminder times in event and assistant results', async () => {
@@ -960,6 +977,49 @@ it('schedules reminders while the page is open after notification permission is 
   expect(oscillatorStartMock).toHaveBeenCalledTimes(13)
   expect(oscillatorStopMock).toHaveBeenCalledTimes(13)
   expect(oscillatorStopMock).toHaveBeenLastCalledWith(5.02)
+})
+
+it('highlights due today events and appends an inline reminder card', async () => {
+  vi.useFakeTimers()
+  storeSession()
+  vi.setSystemTime(new Date('2026-05-31T09:29:45').getTime())
+  listEventsMock.mockResolvedValue([
+    {
+      id: 7,
+      user_id: 2,
+      title: '产品评审',
+      starts_at: '2026-05-31T09:30:00',
+      ends_at: '2026-05-31T09:31:00',
+      reminder_at: null,
+      status: 'scheduled',
+      source_text: null,
+    },
+  ])
+
+  render(<App />)
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+  expect(screen.getByText('产品评审')).toBeInTheDocument()
+
+  await act(async () => {
+    vi.advanceTimersByTime(30_000)
+  })
+
+  expect(
+    screen.getByText((_, node) => {
+      return node?.textContent === '💡 提醒：您的 产品评审 已经到时间了。'
+    }),
+  ).toBeInTheDocument()
+  const eventCard = screen.getByLabelText(/09:30 - 09:31 产品评审/)
+  expect(eventCard.className).toContain('animate-pulse')
+  expect(eventCard.className).toContain('border-[#7AA68B]')
+
+  fireEvent.click(screen.getByRole('button', { name: '我知道了' }))
+
+  expect(eventCard.className).not.toContain('animate-pulse')
+  expect(eventCard.className).toContain('opacity-55')
 })
 
 it('does not schedule reminders before notification permission is granted', async () => {

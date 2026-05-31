@@ -199,6 +199,26 @@ it('keeps listening after transient network recognition errors', () => {
   expect(result.current.errorMessage).toBeNull()
 })
 
+it('recreates recognition after transient errors even when the browser does not end the session', () => {
+  vi.useFakeTimers()
+  const { result } = renderHook(() => useSpeechRecognition())
+
+  act(() => {
+    result.current.start()
+  })
+  const firstRecognition = FakeSpeechRecognition.latest
+  act(() => {
+    firstRecognition?.emitError('no-speech')
+    vi.advanceTimersByTime(250)
+  })
+
+  expect(firstRecognition?.aborted).toBe(true)
+  expect(FakeSpeechRecognition.latest).not.toBe(firstRecognition)
+  expect(FakeSpeechRecognition.latest?.started).toBe(true)
+  expect(result.current.status).toBe('listening')
+  vi.useRealTimers()
+})
+
 it('restarts recognition after aborted recognition sessions end', () => {
   vi.useFakeTimers()
   const { result } = renderHook(() => useSpeechRecognition())

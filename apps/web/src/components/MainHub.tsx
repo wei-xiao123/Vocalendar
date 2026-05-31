@@ -12,7 +12,7 @@ import {
   Volume2,
 } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useEffect, useMemo, useState } from 'react'
 
 import bgImage from '../assets/images/calendar-bg.png'
 import { type AssistantCommandResponse, type AuthUser } from '../lib/api'
@@ -20,6 +20,8 @@ import { type UiCalendarEvent } from '../types'
 import { CalendarDrawer } from './CalendarDrawer'
 import { VoiceOrb } from './VoiceOrb'
 
+const SCHEDULE_CHECK_INTERVAL_MS = 30_000
+const SCHEDULE_TRIGGER_WINDOW_MS = 30_000
 const COMMAND_HINTS = [
   { icon: 'calendar', text: '明天下午3点和张三开会' },
   { icon: 'list', text: '取消这周末所有日程' },
@@ -57,6 +59,11 @@ type VoiceViewState = {
   isSupported: boolean
   status: string
   transcript: string
+}
+
+type ReminderHint = {
+  eventId: string
+  title: string
 }
 
 type MainHubProps = {
@@ -134,10 +141,23 @@ export function MainHub({
   const [commandText, setCommandText] = useState('')
   const [commandHintStartIndex, setCommandHintStartIndex] = useState(0)
   const [isRequestingPermission, setIsRequestingPermission] = useState(false)
+  const [activeReminderIds, setActiveReminderIds] = useState<Set<string>>(
+    () => new Set(),
+  )
+  const [completedReminderIds, setCompletedReminderIds] = useState<Set<string>>(
+    () => new Set(),
+  )
+  const [triggeredReminderIds, setTriggeredReminderIds] = useState<Set<string>>(
+    () => new Set(),
+  )
+  const [reminderHints, setReminderHints] = useState<ReminderHint[]>([])
   const highlightedEventId = assistantResponse?.event?.id
     ? String(assistantResponse.event.id)
     : null
-  const todayEvents = events.filter((event) => event.dateStr === 'Today')
+  const todayEvents = useMemo(
+    () => events.filter((event) => event.dateStr === 'Today'),
+    [events],
+  )
   const displayName = user.display_name ?? user.username ?? 'Guest User'
   const visibleVoiceCommand = [voiceState.transcript, voiceState.interimTranscript]
     .map((part) => part.trim())
@@ -154,6 +174,65 @@ export function MainHub({
     !googleConnectionState.connected &&
     (isGoogleModalManuallyOpen ||
       (shouldPromptGoogleCalendar && !isGuest && !hasDismissedGooglePrompt))
+
+  useEffect(() => {
+    function checkScheduleReminders() {
+      const nowMs = Date.now()
+
+      for (const event of todayEvents) {
+        const startsAtMs = new Date(event.startsAt).getTime()
+        if (Number.isNaN(startsAtMs)) {
+          continue
+        }
+
+        if (completedReminderIds.has(event.id)) {
+          continue
+        }
+
+        if (
+          isSameMinute(nowMs, startsAtMs) &&
+          !triggeredReminderIds.has(event.id)
+        ) {
+          setTriggeredReminderIds((current) => new Set(current).add(event.id))
+          setActiveReminderIds((current) => new Set(current).add(event.id))
+          setReminderHints((current) => {
+            if (current.some((hint) => hint.eventId === event.id)) {
+              return current
+            }
+            return [{ eventId: event.id, title: event.title }, ...current]
+          })
+          if (reminderSoundState.enabled) {
+            onTestReminderSound()
+          }
+        }
+
+        if (nowMs >= getEventCompletionTimeMs(event)) {
+          setActiveReminderIds((current) => {
+            if (!current.has(event.id)) {
+              return current
+            }
+            const next = new Set(current)
+            next.delete(event.id)
+            return next
+          })
+          setCompletedReminderIds((current) => new Set(current).add(event.id))
+        }
+      }
+    }
+
+    checkScheduleReminders()
+    const intervalId = window.setInterval(
+      checkScheduleReminders,
+      SCHEDULE_CHECK_INTERVAL_MS,
+    )
+    return () => window.clearInterval(intervalId)
+  }, [
+    completedReminderIds,
+    onTestReminderSound,
+    reminderSoundState.enabled,
+    todayEvents,
+    triggeredReminderIds,
+  ])
 
   function handleOrbClick() {
     if (!voiceState.isSupported) {
@@ -184,6 +263,15 @@ export function MainHub({
     } finally {
       setIsRequestingPermission(false)
     }
+  }
+
+  function acknowledgeReminder(eventId: string) {
+    setActiveReminderIds((current) => {
+      const next = new Set(current)
+      next.delete(eventId)
+      return next
+    })
+    setCompletedReminderIds((current) => new Set(current).add(eventId))
   }
 
   return (
@@ -275,6 +363,14 @@ export function MainHub({
             </div>
 
             <div className="space-y-3">
+              {reminderHints.map((hint) => (
+                <div
+                  className="rounded-[20px] border border-[#B7D8C4]/70 bg-white/55 p-3 text-[13px] leading-relaxed text-[#4F6858] shadow-[0_8px_28px_rgba(122,166,139,0.16)] backdrop-blur-md"
+                  key={hint.eventId}
+                >
+                  💡 提醒：您的 <span className="font-semibold">{hint.title}</span> 已经到时间了。
+                </div>
+              ))}
               {getVisibleCommandHints(commandHintStartIndex).map((hint) => (
                 <CommandHint
                   icon={getCommandHintIcon(hint.icon)}
@@ -429,34 +525,56 @@ export function MainHub({
                 </div>
 
                 <div className="space-y-2.5">
-                  {todayEvents.slice(0, 3).map((event) => (
-                    <div
-                      aria-label={`${event.startTime} ${event.title}`}
-                      className="flex gap-2.5 rounded-2xl border border-[#EBE3D7]/50 bg-white p-3 shadow-[0_4px_16px_rgba(0,0,0,0.015)]"
-                      key={event.id}
-                    >
-                      <div className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${event.color}`} />
-                      <div className="flex min-w-0 flex-col">
-                        <span className="text-[11px] font-medium leading-none text-[#9A9287]">
-                          {event.startTime}
-                        </span>
-                        <span
-                          aria-hidden="true"
-                          className="mb-0.5 mt-1 truncate text-[14px] font-semibold leading-tight text-[#3D362D]"
-                        >
-                          <SplitText text={event.title} />
-                        </span>
-                        <span className="truncate text-[11px] leading-none text-[#9A9287]">
-                          <SplitText text={event.location ?? event.status ?? 'scheduled'} />
-                        </span>
-                        {event.syncText ? (
-                          <span className="mt-1 truncate text-[10px] leading-none text-[#7AA68B]">
-                            <SplitText text={event.syncText} />
+                  {todayEvents.slice(0, 3).map((event) => {
+                    const isReminderActive = activeReminderIds.has(event.id)
+                    const isReminderCompleted = completedReminderIds.has(event.id)
+
+                    return (
+                      <div
+                        aria-label={`${event.startTime} ${event.title}`}
+                        className={[
+                          'flex gap-2.5 rounded-2xl border p-3 shadow-[0_4px_16px_rgba(0,0,0,0.015)] transition',
+                          isReminderActive
+                            ? 'animate-pulse border-[#7AA68B] bg-white'
+                            : 'border-[#EBE3D7]/50 bg-white',
+                          isReminderCompleted ? 'opacity-55 grayscale' : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
+                        key={event.id}
+                      >
+                        <div className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${event.color}`} />
+                        <div className="flex min-w-0 flex-1 flex-col">
+                          <span className="text-[11px] font-medium leading-none text-[#9A9287]">
+                            {event.startTime}
                           </span>
-                        ) : null}
+                          <span
+                            aria-hidden="true"
+                            className="mb-0.5 mt-1 truncate text-[14px] font-semibold leading-tight text-[#3D362D]"
+                          >
+                            <SplitText text={event.title} />
+                          </span>
+                          <span className="truncate text-[11px] leading-none text-[#9A9287]">
+                            <SplitText text={event.location ?? event.status ?? 'scheduled'} />
+                          </span>
+                          {event.syncText ? (
+                            <span className="mt-1 truncate text-[10px] leading-none text-[#7AA68B]">
+                              <SplitText text={event.syncText} />
+                            </span>
+                          ) : null}
+                          {isReminderActive ? (
+                            <button
+                              className="mt-2 w-max rounded-full border border-[#B7D8C4] bg-[#F2F7F3] px-2.5 py-1 text-[10px] font-semibold text-[#5F8B6E] transition hover:bg-[#E6F1EA]"
+                              onClick={() => acknowledgeReminder(event.id)}
+                              type="button"
+                            >
+                              我知道了
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                   {todayEvents.length === 0 ? (
                     <p className="rounded-2xl bg-white px-3 py-4 text-center text-[12px] text-[#9A9287]">
                       今天还没有日程。
@@ -654,6 +772,22 @@ function getCommandHintIcon(icon: (typeof COMMAND_HINTS)[number]['icon']) {
     case 'clock':
       return <Clock className="h-4 w-4" />
   }
+}
+
+function isSameMinute(leftMs: number, rightMs: number): boolean {
+  return Math.floor(leftMs / 60_000) === Math.floor(rightMs / 60_000)
+}
+
+function getEventCompletionTimeMs(event: UiCalendarEvent): number {
+  const endsAtMs = event.endsAt ? new Date(event.endsAt).getTime() : Number.NaN
+  if (!Number.isNaN(endsAtMs)) {
+    return endsAtMs
+  }
+  const startsAtMs = new Date(event.startsAt).getTime()
+  if (Number.isNaN(startsAtMs)) {
+    return Number.POSITIVE_INFINITY
+  }
+  return startsAtMs + SCHEDULE_TRIGGER_WINDOW_MS
 }
 
 function ControlRow({

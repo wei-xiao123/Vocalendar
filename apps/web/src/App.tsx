@@ -23,6 +23,7 @@ import { type UiCalendarEvent } from './types'
 
 const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 const AUTH_STORAGE_KEY = 'vocalendar.auth'
+const REMINDER_SOUND_STORAGE_KEY = 'vocalendar.reminderSoundEnabled'
 const MAX_REMINDER_DELAY_MS = 2_147_483_647
 const REMINDER_SOUND_DURATION_SECONDS = 5
 const REMINDER_SOUND_UNLOCK_ERROR = '提醒音启用失败，请与页面交互后重试。'
@@ -114,12 +115,7 @@ function App() {
     useState<NotificationPermission>(() => getInitialNotificationPermission())
   const audioContextRef = useRef<AudioContext | null>(null)
   const [reminderSoundState, setReminderSoundState] =
-    useState<ReminderSoundState>(() => ({
-      enabled: false,
-      error: null,
-      isSupported: getAudioContextConstructor() !== null,
-      isUnlocking: false,
-    }))
+    useState<ReminderSoundState>(() => getInitialReminderSoundState())
   const [isSendingCommand, setIsSendingCommand] = useState(false)
   const [assistantResponse, setAssistantResponse] =
     useState<AssistantCommandResponse | null>(null)
@@ -477,6 +473,7 @@ function App() {
         enabled: false,
         error: REMINDER_SOUND_UNLOCK_ERROR,
       }))
+      window.localStorage.removeItem(REMINDER_SOUND_STORAGE_KEY)
     }
   }
 
@@ -489,6 +486,7 @@ function App() {
         isSupported: false,
         isUnlocking: false,
       })
+      window.localStorage.removeItem(REMINDER_SOUND_STORAGE_KEY)
       return
     }
 
@@ -510,6 +508,7 @@ function App() {
         isSupported: true,
         isUnlocking: false,
       })
+      window.localStorage.setItem(REMINDER_SOUND_STORAGE_KEY, 'true')
     } catch {
       setReminderSoundState({
         enabled: false,
@@ -517,6 +516,7 @@ function App() {
         isSupported: true,
         isUnlocking: false,
       })
+      window.localStorage.removeItem(REMINDER_SOUND_STORAGE_KEY)
     }
   }
 
@@ -610,6 +610,18 @@ function getInitialNotificationPermission(): NotificationPermission {
     return 'denied'
   }
   return window.Notification.permission
+}
+
+function getInitialReminderSoundState(): ReminderSoundState {
+  const isSupported = getAudioContextConstructor() !== null
+  return {
+    enabled:
+      isSupported &&
+      window.localStorage.getItem(REMINDER_SOUND_STORAGE_KEY) === 'true',
+    error: null,
+    isSupported,
+    isUnlocking: false,
+  }
 }
 
 function getAudioContextConstructor(): AudioContextConstructor | null {
@@ -715,6 +727,8 @@ function toUiCalendarEvent(event: CalendarEvent, nowMs: number): UiCalendarEvent
     startTime: event.ends_at
       ? `${formatClock(event.starts_at)} - ${formatClock(event.ends_at)}`
       : formatClock(event.starts_at),
+    startsAt: event.starts_at,
+    endsAt: event.ends_at,
     status: displayStatus,
     syncText: getEventSyncText(event),
     title: event.title,

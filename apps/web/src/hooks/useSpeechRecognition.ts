@@ -98,6 +98,26 @@ export function useSpeechRecognition(
     restartTimeoutRef.current = null
   }, [])
 
+  const scheduleRecognitionRestart = useCallback(
+    (recognition: SpeechRecognitionLike, delayMs = 250) => {
+      clearRestartTimeout()
+      restartTimeoutRef.current = window.setTimeout(() => {
+        restartTimeoutRef.current = null
+        if (!shouldListenRef.current || recognitionRef.current !== recognition) {
+          return
+        }
+
+        recognition.onend = null
+        recognition.onerror = null
+        recognition.onresult = null
+        recognition.abort()
+        recognitionRef.current = null
+        startRecognitionRef.current()
+      }, delayMs)
+    },
+    [clearRestartTimeout],
+  )
+
   const startRecognition = useCallback(() => {
     const RecognitionConstructor = getRecognitionConstructor()
     if (!RecognitionConstructor) {
@@ -139,6 +159,7 @@ export function useSpeechRecognition(
       if (isTransientRecognitionError(event.error)) {
         setErrorMessage(null)
         setStatus('listening')
+        scheduleRecognitionRestart(recognition)
         return
       }
       shouldListenRef.current = false
@@ -150,17 +171,11 @@ export function useSpeechRecognition(
       if (recognitionRef.current !== recognition) {
         return
       }
-      recognitionRef.current = null
       if (shouldListenRef.current) {
-        clearRestartTimeout()
-        restartTimeoutRef.current = window.setTimeout(() => {
-          restartTimeoutRef.current = null
-          if (shouldListenRef.current) {
-            startRecognitionRef.current()
-          }
-        }, 250)
+        scheduleRecognitionRestart(recognition)
         return
       }
+      recognitionRef.current = null
       setStatus((current) => (current === 'error' ? current : 'idle'))
     }
 
@@ -176,6 +191,7 @@ export function useSpeechRecognition(
     getRecognitionConstructor,
     interimResults,
     lang,
+    scheduleRecognitionRestart,
   ])
 
   useEffect(() => {
