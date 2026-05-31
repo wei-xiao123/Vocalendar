@@ -92,6 +92,32 @@ def test_parse_add_command_with_hour_reminder_offset() -> None:
     }
 
 
+def test_parse_add_command_with_today_time_without_date() -> None:
+    result = parse_assistant_command(
+        "我现在。有一个会议大概在四点钟要开你给我。加一个日志提醒。",
+        now=datetime(2026, 5, 31, 13),
+    )
+
+    assert result.action == "add_event"
+    assert result.parameters == {
+        "starts_at": "2026-05-31T16:00:00",
+        "title": "会议",
+    }
+
+
+def test_parse_add_command_with_today_afternoon_time_without_date() -> None:
+    result = parse_assistant_command(
+        "下午四点加个会议提醒",
+        now=datetime(2026, 5, 31, 13),
+    )
+
+    assert result.action == "add_event"
+    assert result.parameters == {
+        "starts_at": "2026-05-31T16:00:00",
+        "title": "会议",
+    }
+
+
 def test_parse_add_command_without_datetime() -> None:
     result = parse_assistant_command("新增提醒 提交周报")
 
