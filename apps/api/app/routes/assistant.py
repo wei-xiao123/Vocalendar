@@ -105,11 +105,16 @@ def _delete_event_from_command(
         statement = statement.where(Event.starts_at >= starts_from)
         statement = statement.where(Event.starts_at <= starts_to)
     statement = statement.order_by(Event.starts_at.asc(), Event.id.asc())
-    event = session.scalars(statement).first()
-    if event is None:
+    events = session.scalars(statement).all()
+    if not events:
         parsed_command.message = "未找到匹配日程。"
         return parsed_command
+    if len(events) > 1:
+        parsed_command.message = "找到多个匹配日程，请补充更具体的时间。"
+        parsed_command.events = [_to_assistant_event_result(event) for event in events]
+        return parsed_command
 
+    event = events[0]
     parsed_command.event = _to_assistant_event_result(event)
     session.delete(event)
     session.commit()
