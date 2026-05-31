@@ -173,6 +173,72 @@ def test_assistant_list_command_filters_day_after_tomorrow(monkeypatch) -> None:
     }
 
 
+def test_assistant_list_command_filters_next_week_weekday(monkeypatch) -> None:
+    TestingSessionLocal = build_test_session()
+    today = date.today()
+    current_weekday = today.weekday()
+    target_date = today + timedelta(days=(7 - current_weekday) + 2)
+    other_date = target_date - timedelta(days=1)
+    with TestingSessionLocal() as session:
+        session.add(User(username="octocat", is_guest=False))
+        session.flush()
+        session.add_all(
+            [
+                Event(
+                    user_id=1,
+                    title="下周三会议",
+                    starts_at=datetime.combine(
+                        target_date,
+                        datetime.min.time(),
+                    ).replace(
+                        hour=9,
+                        minute=30,
+                    ),
+                ),
+                Event(
+                    user_id=1,
+                    title="其他日程",
+                    starts_at=datetime.combine(other_date, datetime.min.time()).replace(
+                        hour=9,
+                        minute=30,
+                    ),
+                ),
+            ]
+        )
+        session.commit()
+
+    monkeypatch.setattr("app.routes.assistant.SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr("app.routes.auth.get_settings", auth_settings)
+    token = create_access_token("1", auth_settings())
+    client = TestClient(app)
+
+    response = client.post(
+        "/assistant/commands",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": "下周三有哪些日程"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "list_events",
+        "confidence": 0.8,
+        "text": "下周三有哪些日程",
+        "parameters": {"target_date": target_date.isoformat()},
+        "message": "找到 1 个日程。",
+        "events": [
+            {
+                "id": 1,
+                "title": "下周三会议",
+                "starts_at": datetime.combine(
+                    target_date,
+                    datetime.min.time(),
+                ).replace(hour=9, minute=30).isoformat(),
+                "status": "scheduled",
+            }
+        ],
+    }
+
+
 def test_assistant_add_command_creates_event(monkeypatch) -> None:
     TestingSessionLocal = build_test_session()
     with TestingSessionLocal() as session:
@@ -406,6 +472,75 @@ def test_assistant_delete_command_filters_by_range(monkeypatch) -> None:
         events = session.scalars(select(Event)).all()
         assert [(event.title, event.starts_at) for event in events] == [
             ("产品评审", today_datetime)
+        ]
+
+
+def test_assistant_delete_command_filters_by_next_week_weekday(monkeypatch) -> None:
+    TestingSessionLocal = build_test_session()
+    today = date.today()
+    current_weekday = today.weekday()
+    target_date = today + timedelta(days=(7 - current_weekday) + 2)
+    other_date = target_date - timedelta(days=1)
+    target_datetime = datetime.combine(target_date, datetime.min.time()).replace(
+        hour=9,
+        minute=30,
+    )
+    other_datetime = datetime.combine(other_date, datetime.min.time()).replace(
+        hour=9,
+        minute=30,
+    )
+    with TestingSessionLocal() as session:
+        session.add(User(username="octocat", is_guest=False))
+        session.flush()
+        session.add_all(
+            [
+                Event(
+                    user_id=1,
+                    title="产品评审",
+                    starts_at=other_datetime,
+                ),
+                Event(
+                    user_id=1,
+                    title="产品评审",
+                    starts_at=target_datetime,
+                ),
+            ]
+        )
+        session.commit()
+
+    monkeypatch.setattr("app.routes.assistant.SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr("app.routes.auth.get_settings", auth_settings)
+    token = create_access_token("1", auth_settings())
+    client = TestClient(app)
+
+    response = client.post(
+        "/assistant/commands",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": "删除下周三的产品评审提醒"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "delete_event",
+        "confidence": 0.85,
+        "text": "删除下周三的产品评审提醒",
+        "parameters": {
+            "target_date": target_date.isoformat(),
+            "title": "产品评审",
+        },
+        "message": "已删除日程。",
+        "event": {
+            "id": 2,
+            "title": "产品评审",
+            "starts_at": target_datetime.isoformat(),
+            "status": "scheduled",
+        },
+    }
+
+    with TestingSessionLocal() as session:
+        events = session.scalars(select(Event)).all()
+        assert [(event.title, event.starts_at) for event in events] == [
+            ("产品评审", other_datetime)
         ]
 
 

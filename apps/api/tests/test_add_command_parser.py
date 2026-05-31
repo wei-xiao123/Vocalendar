@@ -64,6 +64,19 @@ def test_parse_add_command_with_chinese_half_hour() -> None:
     }
 
 
+def test_parse_add_command_with_next_week_weekday() -> None:
+    result = parse_assistant_command(
+        "下周三下午三点提醒我开会",
+        now=datetime(2026, 5, 30, 10),
+    )
+
+    assert result.action == "add_event"
+    assert result.parameters == {
+        "starts_at": "2026-06-03T15:00:00",
+        "title": "开会",
+    }
+
+
 def test_parse_add_command_with_reminder_offset() -> None:
     result = parse_assistant_command(
         "明天下午三点提前十五分钟提醒我开会",

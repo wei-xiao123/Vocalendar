@@ -89,7 +89,7 @@ def _list_events_from_command(
         return parsed_command
 
     statement = select(Event).where(Event.user_id == user_id)
-    range_bounds = _get_range_bounds(parsed_command.parameters.get("range"))
+    range_bounds = _get_range_bounds(parsed_command.parameters)
     if range_bounds is not None:
         starts_from, starts_to = range_bounds
         statement = statement.where(Event.starts_at >= starts_from)
@@ -119,7 +119,7 @@ def _delete_event_from_command(
         return parsed_command
 
     statement = select(Event).where(Event.user_id == user_id, Event.title == title)
-    range_bounds = _get_range_bounds(parsed_command.parameters.get("range"))
+    range_bounds = _get_range_bounds(parsed_command.parameters)
     if range_bounds is not None:
         starts_from, starts_to = range_bounds
         statement = statement.where(Event.starts_at >= starts_from)
@@ -145,7 +145,21 @@ def _delete_event_from_command(
     return parsed_command
 
 
-def _get_range_bounds(range_value: str | None) -> tuple[datetime, datetime] | None:
+def _get_range_bounds(
+    parameters: dict[str, str],
+) -> tuple[datetime, datetime] | None:
+    target_date_value = parameters.get("target_date")
+    if target_date_value:
+        try:
+            target_date = date.fromisoformat(target_date_value)
+        except ValueError:
+            return None
+        return (
+            datetime.combine(target_date, time.min),
+            datetime.combine(target_date, time.max),
+        )
+
+    range_value = parameters.get("range")
     today = date.today()
     if range_value == "today":
         target_date = today

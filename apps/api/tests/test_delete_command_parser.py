@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from app.assistant import parse_assistant_command
 
 
@@ -23,6 +25,19 @@ def test_parse_delete_command_with_relative_date_words() -> None:
     assert result.action == "delete_event"
     assert result.parameters == {
         "range": "tomorrow",
+        "title": "产品评审",
+    }
+
+
+def test_parse_delete_command_with_next_week_weekday() -> None:
+    result = parse_assistant_command(
+        "删除下周三的产品评审提醒",
+        now=datetime(2026, 5, 30, 10),
+    )
+
+    assert result.action == "delete_event"
+    assert result.parameters == {
+        "target_date": "2026-06-03",
         "title": "产品评审",
     }
 
