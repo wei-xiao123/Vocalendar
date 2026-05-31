@@ -23,15 +23,18 @@ import { VoiceOrb } from './VoiceOrb'
 const SCHEDULE_CHECK_INTERVAL_MS = 30_000
 const SCHEDULE_TRIGGER_WINDOW_MS = 30_000
 const COMMAND_HINTS = [
+  { icon: 'calendar', text: '添加提醒 2026-06-01 09:30 产品评审' },
   { icon: 'calendar', text: '明天下午3点和张三开会' },
-  { icon: 'list', text: '取消这周末所有日程' },
-  { icon: 'clock', text: '后天有什么安排？' },
-  { icon: 'calendar', text: '我明天下午3点和张三开会，你帮我设置一个闹钟' },
-  { icon: 'list', text: '把刚刚那个闹钟日程给删掉' },
-  { icon: 'clock', text: '查看今天提醒' },
   { icon: 'calendar', text: '下周三上午10点产品评审' },
+  { icon: 'calendar', text: '明天下午3点提前15分钟提醒我开会' },
+  { icon: 'clock', text: '帮我定一个3分钟后的闹钟' },
+  { icon: 'clock', text: '查看今天提醒' },
+  { icon: 'clock', text: '明天有哪些日程？' },
+  { icon: 'clock', text: '下周三有什么安排？' },
+  { icon: 'list', text: '删除提醒 产品评审' },
   { icon: 'list', text: '删除明天的产品评审提醒' },
-  { icon: 'clock', text: '下周三有哪些日程？' },
+  { icon: 'list', text: '把刚刚添加的闹钟删掉' },
+  { icon: 'list', text: '把刚刚那个响铃的日程给删掉' },
 ] as const
 
 const COMMAND_HINT_COUNT = 3
@@ -63,6 +66,12 @@ type VoiceViewState = {
 
 type ReminderHint = {
   eventId: string
+  title: string
+}
+
+type ReminderToast = {
+  eventId: string
+  startTime: string
   title: string
 }
 
@@ -151,6 +160,7 @@ export function MainHub({
     () => new Set(),
   )
   const [reminderHints, setReminderHints] = useState<ReminderHint[]>([])
+  const [reminderToast, setReminderToast] = useState<ReminderToast | null>(null)
   const highlightedEventId = assistantResponse?.event?.id
     ? String(assistantResponse.event.id)
     : null
@@ -201,6 +211,11 @@ export function MainHub({
             }
             return [{ eventId: event.id, title: event.title }, ...current]
           })
+          setReminderToast({
+            eventId: event.id,
+            startTime: event.startTime,
+            title: event.title,
+          })
           if (reminderSoundState.enabled) {
             onTestReminderSound()
           }
@@ -216,6 +231,9 @@ export function MainHub({
             return next
           })
           setCompletedReminderIds((current) => new Set(current).add(event.id))
+          setReminderToast((current) =>
+            current?.eventId === event.id ? null : current,
+          )
         }
       }
     }
@@ -272,6 +290,9 @@ export function MainHub({
       return next
     })
     setCompletedReminderIds((current) => new Set(current).add(eventId))
+    setReminderToast((current) =>
+      current?.eventId === eventId ? null : current,
+    )
   }
 
   return (
@@ -491,9 +512,9 @@ export function MainHub({
           </div>
 
           <motion.div
-            animate={{ opacity: 1, x: 0 }}
+            animate={{ opacity: 1, x: 32 }}
             className="hidden w-[250px] shrink-0 flex-col rounded-[32px] border border-white/60 bg-[#F9F5EE] p-5 shadow-[0_12px_40px_rgba(0,0,0,0.03)] lg:-mt-12 lg:flex xl:w-[320px] xl:p-6"
-            initial={{ opacity: 0, x: 20 }}
+            initial={{ opacity: 0, x: 52 }}
             transition={{ delay: 0.3 }}
           >
             <div className="mb-4 flex items-center gap-2 text-[#9A9287]">
@@ -653,6 +674,43 @@ export function MainHub({
           </motion.div>
         </div>
       </main>
+
+      <AnimatePresence>
+        {reminderToast ? (
+          <motion.div
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            className="pointer-events-none fixed inset-x-4 top-5 z-40 flex justify-center lg:inset-x-auto lg:right-8 lg:top-8"
+            exit={{ opacity: 0, y: -12, scale: 0.98 }}
+            initial={{ opacity: 0, y: -16, scale: 0.98 }}
+          >
+            <div className="pointer-events-auto w-full max-w-[360px] rounded-[24px] border border-[#B7D8C4]/80 bg-[#FAF8F5]/95 p-4 shadow-[0_18px_48px_rgba(61,54,45,0.14)] backdrop-blur-md">
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#EAF1E7] text-[#6F9B7E]">
+                  <Clock className="h-5 w-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[12px] font-medium text-[#7B746C]">
+                    日程提醒 · {reminderToast.startTime}
+                  </div>
+                  <div className="mt-1 truncate text-[16px] font-semibold text-[#3D362D]">
+                    {reminderToast.title}
+                  </div>
+                  <div className="mt-1 text-[12px] text-[#7B746C]">
+                    这个日程已经到时间了。
+                  </div>
+                </div>
+              </div>
+              <button
+                className="mt-3 w-full rounded-full border border-[#B7D8C4] bg-[#F2F7F3] px-3 py-2 text-[12px] font-semibold text-[#5F8B6E] transition hover:bg-[#E6F1EA]"
+                onClick={() => acknowledgeReminder(reminderToast.eventId)}
+                type="button"
+              >
+                我知道了
+              </button>
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
 
       <footer className="relative z-10 flex w-full shrink-0 items-end justify-between px-10 pb-6 text-[#9A9287]">
         <div className="mb-2 hidden items-center gap-2 font-mono text-[11px] tracking-widest sm:flex">

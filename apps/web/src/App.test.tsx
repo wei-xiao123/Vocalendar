@@ -145,6 +145,7 @@ beforeEach(() => {
     errorMessage: null,
     interimTranscript: '',
     isListening: false,
+    resetTranscript: vi.fn(),
     isSupported: true,
     start: vi.fn(),
     status: 'idle',
@@ -526,10 +527,12 @@ it('renders voice input controls for signed in users', async () => {
 it('starts voice recognition from the microphone control', async () => {
   storeSession()
   const start = vi.fn()
+  const resetTranscript = vi.fn()
   useSpeechRecognitionMock.mockReturnValue({
     errorMessage: null,
     interimTranscript: '',
     isListening: false,
+    resetTranscript,
     isSupported: true,
     start,
     status: 'idle',
@@ -543,6 +546,7 @@ it('starts voice recognition from the microphone control', async () => {
   fireEvent.click(screen.getByRole('button', { name: '开始识别' }))
 
   expect(start).toHaveBeenCalledOnce()
+  expect(resetTranscript).toHaveBeenCalledOnce()
 })
 
 it('shows voice transcripts and enables voice command execution', async () => {
@@ -551,6 +555,7 @@ it('shows voice transcripts and enables voice command execution', async () => {
     errorMessage: null,
     interimTranscript: '明天下午',
     isListening: true,
+    resetTranscript: vi.fn(),
     isSupported: true,
     start: vi.fn(),
     status: 'listening',
@@ -571,10 +576,12 @@ it('shows voice transcripts and enables voice command execution', async () => {
 
 it('sends a final voice transcript as an assistant command', async () => {
   storeSession()
+  const resetTranscript = vi.fn()
   useSpeechRecognitionMock.mockReturnValue({
     errorMessage: null,
     interimTranscript: '',
     isListening: false,
+    resetTranscript,
     isSupported: true,
     start: vi.fn(),
     status: 'idle',
@@ -596,6 +603,7 @@ it('sends a final voice transcript as an assistant command', async () => {
   fireEvent.click(screen.getByRole('button', { name: '执行语音命令' }))
 
   expect(sendAssistantCommandMock).toHaveBeenCalledWith('查看提醒', 'stored-token')
+  expect(resetTranscript).toHaveBeenCalledOnce()
   expect(await screen.findAllByText('找到 0 个日程。')).not.toHaveLength(0)
 })
 
@@ -605,6 +613,7 @@ it('sends a visible interim voice transcript as an assistant command', async () 
     errorMessage: null,
     interimTranscript: '帮我定一个二分钟后响的闹铃我要去开会。',
     isListening: true,
+    resetTranscript: vi.fn(),
     isSupported: true,
     start: vi.fn(),
     status: 'listening',
@@ -631,6 +640,7 @@ it('shows the assistant response after executing a visible voice transcript', as
     errorMessage: null,
     interimTranscript: '帮我定一个三分钟后的闹钟。',
     isListening: false,
+    resetTranscript: vi.fn(),
     isSupported: true,
     start: vi.fn(),
     status: 'idle',
@@ -863,6 +873,23 @@ it('keeps reminder sound enabled after reloading the page', async () => {
   expect(screen.getByRole('button', { name: '测试提醒音' })).toBeEnabled()
 })
 
+it('plays reminder sound after restoring the enabled state from storage', async () => {
+  storeSession()
+  window.localStorage.setItem('vocalendar.reminderSoundEnabled', 'true')
+
+  render(<App />)
+  await screen.findByText('还没有日程。')
+
+  fireEvent.click(screen.getByRole('button', { name: '测试提醒音' }))
+
+  await waitFor(() => {
+    expect(audioContextInstances).toHaveLength(1)
+  })
+  expect(audioContextInstances[0].resume).toHaveBeenCalledOnce()
+  expect(oscillatorStartMock).toHaveBeenCalled()
+  expect(oscillatorStopMock).toHaveBeenLastCalledWith(5.02)
+})
+
 it('renders reminder times in event and assistant results', async () => {
   storeSession()
   listEventsMock.mockResolvedValue([
@@ -1015,8 +1042,11 @@ it('highlights due today events and appends an inline reminder card', async () =
   const eventCard = screen.getByLabelText(/09:30 - 09:31 产品评审/)
   expect(eventCard.className).toContain('animate-pulse')
   expect(eventCard.className).toContain('border-[#7AA68B]')
+  expect(screen.getByText('日程提醒 · 09:30 - 09:31')).toBeInTheDocument()
+  expect(screen.getAllByText('产品评审')).toHaveLength(3)
+  expect(screen.getByText('这个日程已经到时间了。')).toBeInTheDocument()
 
-  fireEvent.click(screen.getByRole('button', { name: '我知道了' }))
+  fireEvent.click(screen.getAllByRole('button', { name: '我知道了' }).at(-1)!)
 
   expect(eventCard.className).not.toContain('animate-pulse')
   expect(eventCard.className).toContain('opacity-55')

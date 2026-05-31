@@ -56,6 +56,20 @@ def test_parse_delete_command_with_speech_intro() -> None:
     assert result.parameters == {"title": "闹钟"}
 
 
+def test_parse_delete_command_with_ring_alarm_phrase() -> None:
+    result = parse_assistant_command("把刚刚那个响铃的日程给删掉")
+
+    assert result.action == "delete_event"
+    assert result.parameters == {"title": "闹钟"}
+
+
+def test_parse_delete_command_with_recently_added_alarm_phrase() -> None:
+    result = parse_assistant_command("让它把刚刚添加的闹钟删掉")
+
+    assert result.action == "delete_event"
+    assert result.parameters == {"title": "闹钟"}
+
+
 def test_parse_delete_command_without_title() -> None:
     result = parse_assistant_command("删除提醒")
 

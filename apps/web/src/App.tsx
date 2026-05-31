@@ -378,6 +378,7 @@ function App() {
 
     setIsSendingCommand(true)
     setAssistantError(null)
+    voiceRecognition.resetTranscript()
 
     try {
       const response = await sendAssistantCommand(
@@ -453,12 +454,21 @@ function App() {
   }
 
   async function playReminderSound() {
-    const audioContext = audioContextRef.current
-    if (!audioContext) {
+    const AudioContextCtor = getAudioContextConstructor()
+    if (!AudioContextCtor) {
+      setReminderSoundState({
+        enabled: false,
+        error: '当前浏览器不支持提醒音。',
+        isSupported: false,
+        isUnlocking: false,
+      })
+      window.localStorage.removeItem(REMINDER_SOUND_STORAGE_KEY)
       return
     }
 
     try {
+      const audioContext = audioContextRef.current ?? new AudioContextCtor()
+      audioContextRef.current = audioContext
       if (audioContext.state !== 'running') {
         await audioContext.resume()
       }
@@ -566,7 +576,12 @@ function App() {
       onRequestNotificationPermission={() => void handleRequestNotificationPermission()}
       onSendAssistantCommand={(commandText) => void handleAssistantCommand(commandText)}
       onSignOut={handleSignOut}
-      onStartListening={voiceRecognition.start}
+      onStartListening={() => {
+        setAssistantResponse(null)
+        setAssistantError(null)
+        voiceRecognition.resetTranscript()
+        voiceRecognition.start()
+      }}
       onStopListening={voiceRecognition.stop}
       onTestReminderSound={() => void playReminderSound()}
       reminderSoundState={reminderSoundState}

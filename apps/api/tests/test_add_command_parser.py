@@ -170,6 +170,32 @@ def test_parse_add_command_infers_meeting_title_from_alarm_request() -> None:
     }
 
 
+def test_parse_add_command_from_plain_meeting_sentence() -> None:
+    result = parse_assistant_command(
+        "明天下午3点和张三开会",
+        now=datetime(2026, 5, 30, 10),
+    )
+
+    assert result.action == "add_event"
+    assert result.parameters == {
+        "starts_at": "2026-05-31T15:00:00",
+        "title": "开会",
+    }
+
+
+def test_parse_add_command_from_speech_intro_plain_meeting_sentence() -> None:
+    result = parse_assistant_command(
+        "我说明天下午3点和张三开会",
+        now=datetime(2026, 5, 30, 10),
+    )
+
+    assert result.action == "add_event"
+    assert result.parameters == {
+        "starts_at": "2026-05-31T15:00:00",
+        "title": "开会",
+    }
+
+
 def test_parse_add_command_without_datetime() -> None:
     result = parse_assistant_command("新增提醒 提交周报")
 
