@@ -48,3 +48,22 @@ def test_database_url_converts_render_postgres_scheme_to_psycopg_driver() -> Non
     assert settings.sqlalchemy_database_url == (
         "postgresql+psycopg://user:pass@host:5432/vocalendar"
     )
+
+
+def test_sqlite_database_url_resolves_relative_paths_from_repo_root() -> None:
+    settings = Settings(database_url="sqlite:///apps/api/local-dev.db")
+
+    assert settings.sqlalchemy_database_url.endswith("/apps/api/local-dev.db")
+    assert settings.sqlalchemy_database_url.startswith("sqlite:///")
+
+
+def test_sqlite_database_url_preserves_in_memory_database() -> None:
+    settings = Settings(database_url="sqlite+pysqlite://")
+
+    assert settings.sqlalchemy_database_url == "sqlite+pysqlite://"
+
+
+def test_sqlite_database_url_preserves_named_in_memory_database() -> None:
+    settings = Settings(database_url="sqlite:///:memory:")
+
+    assert settings.sqlalchemy_database_url == "sqlite:///:memory:"

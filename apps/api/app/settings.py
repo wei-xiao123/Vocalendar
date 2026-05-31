@@ -47,6 +47,17 @@ class Settings(BaseSettings):
             return self.database_url.replace(
                 "postgresql://", "postgresql+psycopg://", 1
             )
+        if self.database_url.startswith("sqlite:///"):
+            db_path_value = self.database_url.removeprefix("sqlite:///")
+            if not db_path_value:
+                return self.database_url
+            if db_path_value == ":memory:":
+                return self.database_url
+            db_path = Path(db_path_value)
+            if db_path.is_absolute():
+                return self.database_url
+            absolute_path = (ROOT_DIR / db_path).resolve().as_posix()
+            return f"sqlite:///{absolute_path}"
         return self.database_url
 
     @property
