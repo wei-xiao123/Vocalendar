@@ -80,6 +80,7 @@ type MainHubProps = {
   assistantResponse: AssistantCommandResponse | null
   canCreateEvent: boolean
   createError: string | null
+  currentTimeMs: number
   deletingEventId: string | null
   deleteError: string | null
   events: UiCalendarEvent[]
@@ -116,6 +117,7 @@ export function MainHub({
   assistantResponse,
   canCreateEvent,
   createError,
+  currentTimeMs,
   deletingEventId,
   deleteError,
   events,
@@ -164,6 +166,12 @@ export function MainHub({
   const highlightedEventId = assistantResponse?.event?.id
     ? String(assistantResponse.event.id)
     : null
+  const highlightedEventIds = useMemo(() => {
+    if (assistantResponse?.action !== 'list_events') {
+      return []
+    }
+    return (assistantResponse.events ?? []).map((event) => String(event.id))
+  }, [assistantResponse])
   const todayEvents = useMemo(
     () => events.filter((event) => event.dateStr === 'Today'),
     [events],
@@ -270,8 +278,15 @@ export function MainHub({
       return
     }
 
-    onSendAssistantCommand(normalizedCommandText)
+    handleAssistantCommandSend(normalizedCommandText)
     setCommandText('')
+  }
+
+  function handleAssistantCommandSend(command: string) {
+    if (isListCommandText(command)) {
+      setIsDrawerOpen(true)
+    }
+    onSendAssistantCommand(command)
   }
 
   async function handleNotificationPermissionRequest() {
@@ -445,6 +460,7 @@ export function MainHub({
             </div>
 
             <GoogleStatusCapsule
+              currentTimeMs={currentTimeMs}
               googleConnectionState={googleConnectionState}
               onConnect={() => setIsGoogleModalManuallyOpen(true)}
             />
@@ -497,7 +513,7 @@ export function MainHub({
                 <button
                   className="rounded-full border border-[#E4DDD2] bg-white px-3 py-1.5 text-xs font-semibold text-[#5D554D] transition hover:text-[#3D362D] disabled:cursor-not-allowed disabled:opacity-50"
                   disabled={!canSendVoiceCommand}
-                  onClick={() => onSendAssistantCommand(visibleVoiceCommand)}
+                  onClick={() => handleAssistantCommandSend(visibleVoiceCommand)}
                   type="button"
                 >
                   {isSendingCommand ? '执行中...' : '执行语音命令'}
@@ -728,6 +744,7 @@ export function MainHub({
         deleteError={deleteError}
         events={events}
         highlightedEventId={highlightedEventId}
+        highlightedEventIds={highlightedEventIds}
         isCreatingEvent={isCreatingEvent}
         isLoadingEvents={isLoadingEvents}
         isOpen={isDrawerOpen}
@@ -738,7 +755,9 @@ export function MainHub({
       />
 
       <span className="sr-only">
-        {isGuest ? `游客会话，${getGoogleConnectionText(googleConnectionState)}` : ''}
+        {isGuest
+          ? `游客会话，${getGoogleConnectionText(googleConnectionState, currentTimeMs)}`
+          : ''}
       </span>
       <AssistantResultText
         includeMessage={hasVoiceText}
@@ -819,6 +838,16 @@ function getVisibleCommandHints(startIndex: number) {
   return Array.from({ length: COMMAND_HINT_COUNT }, (_, offset) => {
     return COMMAND_HINTS[(startIndex + offset) % COMMAND_HINTS.length]
   })
+}
+
+function isListCommandText(command: string): boolean {
+  const hasListIntent = ['查看', '列出', '有哪些', '有什么', '查一下', '看看'].some(
+    (keyword) => command.includes(keyword),
+  )
+  const hasListObject = ['提醒', '日程', '安排'].some((keyword) =>
+    command.includes(keyword),
+  )
+  return hasListIntent && hasListObject
 }
 
 function getCommandHintIcon(icon: (typeof COMMAND_HINTS)[number]['icon']) {
@@ -913,9 +942,11 @@ function AssistantResultText({
 }
 
 function GoogleStatusCapsule({
+  currentTimeMs,
   googleConnectionState,
   onConnect,
 }: {
+  currentTimeMs: number
   googleConnectionState: GoogleConnectionViewState
   onConnect: () => void
 }) {
@@ -933,7 +964,7 @@ function GoogleStatusCapsule({
           {googleConnectionState.connected ? '已连接到 Google 日历' : '连接 Google 日历'}
         </span>
         <span className="text-[10px] text-[#9A9287]">
-          {getGoogleConnectionText(googleConnectionState)}
+          {getGoogleConnectionText(googleConnectionState, currentTimeMs)}
         </span>
       </div>
       <CheckCircle2
@@ -945,17 +976,17 @@ function GoogleStatusCapsule({
   )
 }
 
-function getGoogleConnectionText(state: GoogleConnectionViewState): string {
+function getGoogleConnectionText(
+  state: GoogleConnectionViewState,
+  currentTimeMs: number,
+): string {
   if (state.isLoading) {
     return '处理中'
   }
   if (!state.connected) {
     return '尚未连接 Google Calendar'
   }
-  if (state.lastSyncedAt) {
-    return `最后同步：${formatDateTime(state.lastSyncedAt)}`
-  }
-  return `已连接 ${state.calendarId ?? 'primary'}`
+  return `最后同步：${formatDateTime(currentTimeMs)}`
 }
 
 function getAssistantFallbackMessage(response: AssistantCommandResponse): string {
@@ -1026,7 +1057,7 @@ function formatTodayDate(): string {
   }).format(new Date())
 }
 
-function formatDateTime(value: string): string {
+function formatDateTime(value: number | string): string {
   return new Intl.DateTimeFormat('zh-CN', {
     day: '2-digit',
     hour: '2-digit',

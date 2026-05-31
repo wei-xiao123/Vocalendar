@@ -165,7 +165,9 @@ export function useSpeechRecognition(
       if (isTransientRecognitionError(event.error)) {
         setErrorMessage(null)
         setStatus('listening')
-        scheduleRecognitionRestart(recognition)
+        if (shouldForceRestartRecognition(event.error)) {
+          scheduleRecognitionRestart(recognition)
+        }
         return
       }
       shouldListenRef.current = false
@@ -266,4 +268,8 @@ function getSpeechRecognitionErrorMessage(
 
 function isTransientRecognitionError(error: string | undefined): boolean {
   return error === 'aborted' || error === 'network' || error === 'no-speech'
+}
+
+function shouldForceRestartRecognition(error: string | undefined): boolean {
+  return error === 'aborted' || error === 'network'
 }

@@ -553,6 +553,7 @@ function App() {
       assistantResponse={assistantResponse}
       canCreateEvent={Boolean(authToken)}
       createError={createError}
+      currentTimeMs={currentTimeMs}
       deletingEventId={deletingEventId}
       deleteError={deleteError}
       events={uiEvents}
