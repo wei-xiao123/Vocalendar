@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     api_title: str = "Vocalendar API"
     api_env: str = "local"
     api_cors_origins: str = "http://localhost:5175,http://127.0.0.1:5175"
+    web_app_url: str = "http://127.0.0.1:5175/"
     database_url: str = (
         "postgresql+psycopg://vocalendar:vocalendar@localhost:5432/vocalendar"
     )

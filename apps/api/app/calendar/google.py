@@ -145,10 +145,11 @@ def get_valid_google_access_token(
     settings: Settings | None = None,
 ) -> str:
     resolved_settings = settings or get_settings()
+    expires_at = _to_utc_datetime(connection.token_expires_at)
     if (
         connection.access_token
-        and connection.token_expires_at is not None
-        and connection.token_expires_at > datetime.now(UTC) + timedelta(minutes=1)
+        and expires_at is not None
+        and expires_at > datetime.now(UTC) + timedelta(minutes=1)
     ):
         return decrypt_text(connection.access_token, resolved_settings)
 
@@ -311,3 +312,11 @@ def _to_google_datetime(value: datetime) -> str:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC).isoformat()
     return value.astimezone(UTC).isoformat()
+
+
+def _to_utc_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)

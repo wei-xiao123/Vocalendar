@@ -13,6 +13,7 @@ from app.calendar import (
     sync_user_calendar,
 )
 from app.calendar.google import (
+    GoogleCalendarError,
     build_google_oauth_url,
     exchange_google_code,
     upsert_google_connection_tokens,
@@ -86,19 +87,36 @@ def start_google_oauth(
 
 
 @router.get("/callback")
-def handle_google_oauth_callback(code: str, state: str) -> RedirectResponse:
+def handle_google_oauth_callback(
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+) -> RedirectResponse:
     settings = get_settings()
     if not settings.google_oauth_configured or not settings.google_client_secret:
         raise HTTPException(status_code=503, detail="Google OAuth is not configured")
 
     try:
+        if state is None:
+            raise ValueError
         state_payload = decode_oauth_state(state, settings)
         user_id = int(state_payload["user_id"])
         redirect_to = str(state_payload["redirect_to"])
     except (KeyError, TypeError, ValueError):
         raise HTTPException(status_code=400, detail="Invalid OAuth state") from None
 
-    token_payload = exchange_google_code(code=code, settings=settings)
+    if error or not code:
+        query = {"google_connected": "0", "google_error": "oauth_failed"}
+        separator = "&" if "?" in redirect_to else "?"
+        return RedirectResponse(f"{redirect_to}{separator}{urlencode(query)}")
+
+    try:
+        token_payload = exchange_google_code(code=code, settings=settings)
+    except GoogleCalendarError:
+        query = {"google_connected": "0", "google_error": "oauth_failed"}
+        separator = "&" if "?" in redirect_to else "?"
+        return RedirectResponse(f"{redirect_to}{separator}{urlencode(query)}")
+
     session = SessionLocal()
     try:
         connection = session.query(CalendarConnection).filter(
@@ -121,7 +139,7 @@ def handle_google_oauth_callback(code: str, state: str) -> RedirectResponse:
         try:
             sync_user_calendar(session, user_id)
             query = {"google_connected": "1"}
-        except CalendarIntegrationError:
+        except (CalendarIntegrationError, Exception):
             query = {"google_connected": "0", "google_error": "sync_failed"}
     finally:
         session.close()

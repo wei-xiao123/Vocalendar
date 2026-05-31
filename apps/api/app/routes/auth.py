@@ -1,5 +1,5 @@
 from secrets import token_urlsafe
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 from fastapi import APIRouter, Header, HTTPException
@@ -115,28 +115,72 @@ def _build_github_oauth_url(client_id: str, redirect_uri: str, state: str) -> st
     return f"https://github.com/login/oauth/authorize?{query}"
 
 
+def _resolve_frontend_redirect_target(
+    redirect_to: str | None,
+) -> str:
+    settings = get_settings()
+    candidate = redirect_to.strip() if isinstance(redirect_to, str) else ""
+    if not candidate:
+        return settings.web_app_url
+
+    parsed_candidate = urlparse(candidate)
+    if parsed_candidate.scheme not in {"http", "https"} or not parsed_candidate.netloc:
+        return settings.web_app_url
+
+    parsed_default = urlparse(settings.web_app_url)
+    allowed_origins = {origin.rstrip("/") for origin in settings.cors_origins}
+    allowed_origins.add(f"{parsed_default.scheme}://{parsed_default.netloc}".rstrip("/"))
+    candidate_origin = (
+        f"{parsed_candidate.scheme}://{parsed_candidate.netloc}"
+    ).rstrip("/")
+    if candidate_origin not in allowed_origins:
+        return settings.web_app_url
+
+    return candidate
+
+
+def _redirect_with_query(redirect_to: str, query: dict[str, str]) -> RedirectResponse:
+    separator = "&" if "?" in redirect_to else "?"
+    return RedirectResponse(
+        f"{redirect_to}{separator}{urlencode(query)}",
+        status_code=302,
+    )
+
+
+def _get_frontend_redirect_target_from_state(state: str | None) -> str | None:
+    if not state:
+        return None
+
+    settings = get_settings()
+    try:
+        state_payload = decode_oauth_state(state, settings)
+    except ValueError:
+        return settings.web_app_url
+
+    return _resolve_frontend_redirect_target(state_payload.get("redirect_to"))
+
+
 @router.get("/github/start")
 def start_github_oauth(redirect_to: str | None = None) -> RedirectResponse:
     settings = get_settings()
     if not settings.github_oauth_configured:
         raise HTTPException(status_code=503, detail="GitHub OAuth is not configured")
 
-    state = token_urlsafe(24)
-    if redirect_to:
-        state = create_oauth_state(
-            {
-                "provider": "github",
-                "csrf": state,
-                "redirect_to": redirect_to,
-            },
-            settings,
-        )
+    state = create_oauth_state(
+        {
+            "provider": "github",
+            "csrf": token_urlsafe(24),
+            "redirect_to": _resolve_frontend_redirect_target(redirect_to),
+        },
+        settings,
+    )
     return RedirectResponse(
         _build_github_oauth_url(
             client_id=settings.github_client_id,
             redirect_uri=settings.github_oauth_redirect_uri,
             state=state,
-        )
+        ),
+        status_code=302,
     )
 
 
@@ -157,12 +201,33 @@ def _exchange_github_code(
         },
         timeout=10,
     )
-    if response.status_code != 200:
-        raise HTTPException(status_code=502, detail="GitHub token exchange failed")
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
 
-    access_token = response.json().get("access_token")
+    if response.status_code != 200:
+        error_detail = payload.get("error_description") or payload.get("error")
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"GitHub token exchange failed: {error_detail}"
+                if error_detail
+                else "GitHub token exchange failed"
+            ),
+        )
+
+    access_token = payload.get("access_token")
     if not access_token:
-        raise HTTPException(status_code=502, detail="GitHub token exchange failed")
+        error_detail = payload.get("error_description") or payload.get("error")
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"GitHub token exchange failed: {error_detail}"
+                if error_detail
+                else "GitHub token exchange failed"
+            ),
+        )
     return access_token
 
 
@@ -205,40 +270,61 @@ def _upsert_github_user(session: Session, github_user: dict[str, object]) -> Use
 
 @router.get("/github/callback", response_model=AuthTokenResponse)
 def handle_github_oauth_callback(
-    code: str,
+    code: str | None = None,
     state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
 ) -> AuthTokenResponse | RedirectResponse:
     settings = get_settings()
     if not settings.github_oauth_configured or not settings.github_client_secret:
         raise HTTPException(status_code=503, detail="GitHub OAuth is not configured")
 
-    github_access_token = _exchange_github_code(
-        client_id=settings.github_client_id,
-        client_secret=settings.github_client_secret,
-        redirect_uri=settings.github_oauth_redirect_uri,
-        code=code,
-    )
-    github_user = _fetch_github_user(github_access_token)
+    redirect_to = _get_frontend_redirect_target_from_state(state)
+    if error or not code:
+        if redirect_to:
+            query = {"auth_error": "github_login_failed"}
+            if error:
+                query["auth_provider_error"] = error
+            if error_description:
+                query["auth_error_description"] = error_description
+            return _redirect_with_query(redirect_to, query)
+        raise HTTPException(status_code=400, detail="GitHub OAuth callback is invalid")
+
+    try:
+        github_access_token = _exchange_github_code(
+            client_id=settings.github_client_id,
+            client_secret=settings.github_client_secret,
+            redirect_uri=settings.github_oauth_redirect_uri,
+            code=code,
+        )
+        github_user = _fetch_github_user(github_access_token)
+    except (HTTPException, httpx.HTTPError):
+        if redirect_to:
+            return _redirect_with_query(
+                redirect_to,
+                {"auth_error": "github_login_failed"},
+            )
+        raise
 
     session = SessionLocal()
     try:
-        user = _upsert_github_user(session, github_user)
+        try:
+            user = _upsert_github_user(session, github_user)
+        except HTTPException:
+            if redirect_to:
+                return _redirect_with_query(
+                    redirect_to, {"auth_error": "github_login_failed"}
+                )
+            raise
         auth_response = AuthTokenResponse(
             access_token=create_access_token(str(user.id), settings),
             user=_to_auth_user_response(user),
         )
-        if state:
-            try:
-                state_payload = decode_oauth_state(state, settings)
-            except ValueError:
-                state_payload = {}
-            redirect_to = state_payload.get("redirect_to")
-            if isinstance(redirect_to, str) and redirect_to:
-                separator = "&" if "?" in redirect_to else "?"
-                query = urlencode({"auth_access_token": auth_response.access_token})
-                return RedirectResponse(
-                    f"{redirect_to}{separator}{query}"
-                )
+        if redirect_to:
+            return _redirect_with_query(
+                redirect_to,
+                {"auth_access_token": auth_response.access_token},
+            )
         return auth_response
     finally:
         session.close()

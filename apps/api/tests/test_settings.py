@@ -8,6 +8,7 @@ def test_default_cors_origins_include_localhost_and_loopback() -> None:
         "http://localhost:5175",
         "http://127.0.0.1:5175",
     ]
+    assert settings.web_app_url == "http://127.0.0.1:5175/"
 
 
 def test_cors_origins_ignore_blank_entries() -> None:
