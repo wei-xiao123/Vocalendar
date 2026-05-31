@@ -5,7 +5,11 @@ import {
   createEvent,
   createGuestSession,
   deleteEvent,
+  disconnectGoogleCalendar,
+  getCurrentUser,
   getGitHubOAuthStartUrl,
+  getGoogleConnectionStatus,
+  getGoogleOAuthStartUrl,
   listEvents,
   sendAssistantCommand,
 } from './lib/api'
@@ -15,7 +19,11 @@ vi.mock('./lib/api', () => ({
   createEvent: vi.fn(),
   createGuestSession: vi.fn(),
   deleteEvent: vi.fn(),
+  disconnectGoogleCalendar: vi.fn(),
+  getCurrentUser: vi.fn(),
   getGitHubOAuthStartUrl: vi.fn(() => 'http://localhost:8000/auth/github/start'),
+  getGoogleConnectionStatus: vi.fn(),
+  getGoogleOAuthStartUrl: vi.fn(),
   listEvents: vi.fn(),
   sendAssistantCommand: vi.fn(),
 }))
@@ -27,7 +35,11 @@ vi.mock('./hooks/useSpeechRecognition', () => ({
 const createEventMock = vi.mocked(createEvent)
 const createGuestSessionMock = vi.mocked(createGuestSession)
 const deleteEventMock = vi.mocked(deleteEvent)
+const disconnectGoogleCalendarMock = vi.mocked(disconnectGoogleCalendar)
+const getCurrentUserMock = vi.mocked(getCurrentUser)
 const getGitHubOAuthStartUrlMock = vi.mocked(getGitHubOAuthStartUrl)
+const getGoogleConnectionStatusMock = vi.mocked(getGoogleConnectionStatus)
+const getGoogleOAuthStartUrlMock = vi.mocked(getGoogleOAuthStartUrl)
 const listEventsMock = vi.mocked(listEvents)
 const sendAssistantCommandMock = vi.mocked(sendAssistantCommand)
 const useSpeechRecognitionMock = vi.mocked(useSpeechRecognition)
@@ -46,11 +58,20 @@ beforeEach(() => {
   createEventMock.mockReset()
   createGuestSessionMock.mockReset()
   deleteEventMock.mockReset()
+  disconnectGoogleCalendarMock.mockReset()
+  getCurrentUserMock.mockReset()
   listEventsMock.mockReset()
   sendAssistantCommandMock.mockReset()
   useSpeechRecognitionMock.mockReset()
   getGitHubOAuthStartUrlMock.mockReturnValue(
     'http://localhost:8000/auth/github/start',
+  )
+  getGoogleConnectionStatusMock.mockResolvedValue({
+    connected: false,
+    provider: 'google',
+  })
+  getGoogleOAuthStartUrlMock.mockResolvedValue(
+    'https://accounts.google.com/o/oauth2/v2/auth',
   )
   deleteEventMock.mockResolvedValue(undefined)
   listEventsMock.mockResolvedValue([])
@@ -134,6 +155,7 @@ it('restores a stored session and can sign out', async () => {
 
   expect(screen.getByText('The Octocat')).toBeInTheDocument()
   expect(listEventsMock).toHaveBeenCalledWith('stored-token')
+  expect(getGoogleConnectionStatusMock).toHaveBeenCalledWith('stored-token')
   fireEvent.click(screen.getByRole('button', { name: '退出' }))
 
   await waitFor(() => {
@@ -162,6 +184,15 @@ it('lists events for the restored session', async () => {
   expect(await screen.findByText('产品评审')).toBeInTheDocument()
   expect(screen.getByText('scheduled')).toBeInTheDocument()
   expect(screen.getByText('1')).toBeInTheDocument()
+})
+
+it('renders Google Calendar connection controls for signed in users', async () => {
+  storeSession()
+
+  render(<App />)
+
+  expect(await screen.findByText('尚未连接 Google Calendar')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '连接 Google 日历' })).toBeInTheDocument()
 })
 
 it('shows an empty event state', async () => {
@@ -744,7 +775,7 @@ it('navigates to GitHub OAuth start', () => {
 
   expect(getGitHubOAuthStartUrlMock).toHaveBeenCalledOnce()
   expect(assignMock).toHaveBeenCalledWith(
-    'http://localhost:8000/auth/github/start',
+    expect.stringContaining('http://localhost:8000/auth/github/start'),
   )
 })
 

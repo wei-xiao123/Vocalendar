@@ -44,3 +44,30 @@ def test_github_oauth_start_redirects_to_github_authorize(monkeypatch) -> None:
         "scope": ["read:user user:email"],
         "state": ["fixed-state"],
     }
+
+
+def test_github_oauth_start_accepts_frontend_redirect(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.routes.auth.get_settings",
+        lambda: Settings(
+            github_client_id="github-client-id",
+            github_oauth_redirect_uri="http://localhost:8000/auth/github/callback",
+            jwt_secret="test-secret-with-at-least-thirty-two-bytes",
+        ),
+    )
+    monkeypatch.setattr("app.routes.auth.token_urlsafe", lambda _: "fixed-state")
+
+    client = TestClient(app)
+
+    response = client.get(
+        "/auth/github/start",
+        params={"redirect_to": "http://localhost:5175/"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    location = response.headers["location"]
+    parsed = urlparse(location)
+    query = parse_qs(parsed.query)
+    assert query["client_id"] == ["github-client-id"]
+    assert query["state"][0] != "fixed-state"

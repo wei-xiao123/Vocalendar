@@ -9,6 +9,12 @@ from app.assistant import (
     AssistantEventResult,
     parse_assistant_command,
 )
+from app.calendar import (
+    CalendarIntegrationError,
+    create_user_event,
+    delete_user_event,
+    sync_user_calendar,
+)
 from app.db import SessionLocal
 from app.models import Event
 from app.routes.auth import _extract_bearer_token, _get_user_from_access_token
@@ -53,16 +59,18 @@ def _create_event_from_command(
         parsed_command.message = "缺少日程标题或开始时间。"
         return parsed_command
 
-    event = Event(
-        user_id=user_id,
-        title=title,
-        starts_at=starts_at,
-        reminder_at=reminder_at,
-        source_text=parsed_command.text,
-    )
-    session.add(event)
-    session.commit()
-    session.refresh(event)
+    try:
+        event = create_user_event(
+            session,
+            user_id=user_id,
+            title=title,
+            starts_at=starts_at,
+            reminder_at=reminder_at,
+            source_text=parsed_command.text,
+        )
+    except CalendarIntegrationError as exc:
+        parsed_command.message = str(exc)
+        return parsed_command
 
     parsed_command.message = "已创建日程。"
     parsed_command.event = _to_assistant_event_result(event)
@@ -74,6 +82,12 @@ def _list_events_from_command(
     user_id: int,
     parsed_command: AssistantCommandResponse,
 ) -> AssistantCommandResponse:
+    try:
+        sync_user_calendar(session, user_id)
+    except CalendarIntegrationError as exc:
+        parsed_command.message = str(exc)
+        return parsed_command
+
     statement = select(Event).where(Event.user_id == user_id)
     range_bounds = _get_range_bounds(parsed_command.parameters.get("range"))
     if range_bounds is not None:
@@ -93,6 +107,12 @@ def _delete_event_from_command(
     user_id: int,
     parsed_command: AssistantCommandResponse,
 ) -> AssistantCommandResponse:
+    try:
+        sync_user_calendar(session, user_id)
+    except CalendarIntegrationError as exc:
+        parsed_command.message = str(exc)
+        return parsed_command
+
     title = parsed_command.parameters.get("title")
     if not title:
         parsed_command.message = "缺少要删除的日程标题。"
@@ -116,8 +136,11 @@ def _delete_event_from_command(
 
     event = events[0]
     parsed_command.event = _to_assistant_event_result(event)
-    session.delete(event)
-    session.commit()
+    try:
+        delete_user_event(session, user_id=user_id, event=event)
+    except CalendarIntegrationError as exc:
+        parsed_command.message = str(exc)
+        return parsed_command
     parsed_command.message = "已删除日程。"
     return parsed_command
 

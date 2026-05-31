@@ -16,6 +16,14 @@ export type AuthToken = {
   user: AuthUser
 }
 
+export type GoogleConnectionStatus = {
+  connected: boolean
+  provider: 'google'
+  calendar_id?: string | null
+  last_synced_at?: string | null
+  sync_error?: string | null
+}
+
 export type CalendarEvent = {
   id: number
   user_id: number
@@ -108,8 +116,13 @@ async function request<T>(
 
 export function getGitHubOAuthStartUrl(
   baseUrl = DEFAULT_API_BASE_URL,
+  redirectTo?: string,
 ): string {
-  return buildUrl('/auth/github/start', baseUrl)
+  const url = new URL(buildUrl('/auth/github/start', baseUrl))
+  if (redirectTo) {
+    url.searchParams.set('redirect_to', redirectTo)
+  }
+  return url.toString()
 }
 
 export function createGuestSession(): Promise<AuthToken> {
@@ -168,6 +181,40 @@ export function sendAssistantCommand(
     {
       method: 'POST',
       body: JSON.stringify({ text }),
+    },
+    accessToken,
+  )
+}
+
+export async function getGoogleOAuthStartUrl(
+  accessToken: string,
+  redirectTo: string,
+): Promise<string> {
+  const response = await request<{ authorization_url: string }>(
+    `/integrations/google/start?redirect_to=${encodeURIComponent(redirectTo)}`,
+    {
+      method: 'POST',
+    },
+    accessToken,
+  )
+  return response.authorization_url
+}
+
+export function getGoogleConnectionStatus(
+  accessToken: string,
+): Promise<GoogleConnectionStatus> {
+  return request<GoogleConnectionStatus>(
+    '/integrations/google/status',
+    {},
+    accessToken,
+  )
+}
+
+export function disconnectGoogleCalendar(accessToken: string): Promise<void> {
+  return request<void>(
+    '/integrations/google/connection',
+    {
+      method: 'DELETE',
     },
     accessToken,
   )
