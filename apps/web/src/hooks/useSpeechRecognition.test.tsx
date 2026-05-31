@@ -185,7 +185,7 @@ it('sets error status on recognition errors', () => {
   )
 })
 
-it('describes network recognition errors in Chinese', () => {
+it('keeps listening after transient network recognition errors', () => {
   const { result } = renderHook(() => useSpeechRecognition())
 
   act(() => {
@@ -195,8 +195,32 @@ it('describes network recognition errors in Chinese', () => {
     FakeSpeechRecognition.latest?.emitError('network')
   })
 
-  expect(result.current.status).toBe('error')
-  expect(result.current.errorMessage).toBe(
-    '语音识别网络连接失败，请检查浏览器语音服务或网络后重试。',
-  )
+  expect(result.current.status).toBe('listening')
+  expect(result.current.errorMessage).toBeNull()
+})
+
+it('restarts recognition after aborted recognition sessions end', () => {
+  vi.useFakeTimers()
+  const { result } = renderHook(() => useSpeechRecognition())
+
+  act(() => {
+    result.current.start()
+  })
+  const firstRecognition = FakeSpeechRecognition.latest
+  act(() => {
+    firstRecognition?.emitError('aborted')
+  })
+
+  expect(result.current.status).toBe('listening')
+  expect(result.current.errorMessage).toBeNull()
+
+  act(() => {
+    firstRecognition?.end()
+    vi.advanceTimersByTime(250)
+  })
+
+  expect(FakeSpeechRecognition.latest).not.toBe(firstRecognition)
+  expect(FakeSpeechRecognition.latest?.started).toBe(true)
+  expect(result.current.status).toBe('listening')
+  vi.useRealTimers()
 })

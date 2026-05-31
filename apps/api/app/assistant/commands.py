@@ -571,7 +571,13 @@ def _clean_add_title(value: str) -> str:
         "加",
     ):
         title = title.replace(phrase, " ")
-    return _normalize_title_text(title)
+    return _extract_compact_event_title(_normalize_title_text(title))
+
+
+def _extract_compact_event_title(title: str) -> str:
+    if "开会" in title:
+        return "开会"
+    return title
 
 
 def _clean_delete_title(value: str) -> str:
