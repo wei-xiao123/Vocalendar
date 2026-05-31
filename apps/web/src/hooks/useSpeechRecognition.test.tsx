@@ -243,7 +243,7 @@ it('recreates recognition after recoverable network errors even when the browser
   vi.useRealTimers()
 })
 
-it('keeps the current recognition session after no-speech until the browser ends it', () => {
+it('recreates recognition after no-speech when the browser does not end the session', () => {
   vi.useFakeTimers()
   const { result } = renderHook(() => useSpeechRecognition())
 
@@ -253,11 +253,12 @@ it('keeps the current recognition session after no-speech until the browser ends
   const firstRecognition = FakeSpeechRecognition.latest
   act(() => {
     firstRecognition?.emitError('no-speech')
-    vi.advanceTimersByTime(250)
+    vi.advanceTimersByTime(1000)
   })
 
-  expect(firstRecognition?.aborted).toBe(false)
-  expect(FakeSpeechRecognition.latest).toBe(firstRecognition)
+  expect(firstRecognition?.aborted).toBe(true)
+  expect(FakeSpeechRecognition.latest).not.toBe(firstRecognition)
+  expect(FakeSpeechRecognition.latest?.started).toBe(true)
   expect(result.current.status).toBe('listening')
   vi.useRealTimers()
 })
@@ -285,5 +286,33 @@ it('restarts recognition after aborted recognition sessions end', () => {
   expect(FakeSpeechRecognition.latest).not.toBe(firstRecognition)
   expect(FakeSpeechRecognition.latest?.started).toBe(true)
   expect(result.current.status).toBe('listening')
+  vi.useRealTimers()
+})
+
+it('keeps final transcripts when recognition automatically restarts after end', () => {
+  vi.useFakeTimers()
+  const { result } = renderHook(() => useSpeechRecognition())
+
+  act(() => {
+    result.current.start()
+  })
+  const firstRecognition = FakeSpeechRecognition.latest
+  act(() => {
+    firstRecognition?.emitResult([
+      { isFinal: true, transcript: '帮我定一个一分钟之后的闹铃' },
+    ])
+  })
+
+  expect(result.current.transcript).toBe('帮我定一个一分钟之后的闹铃')
+
+  act(() => {
+    firstRecognition?.end()
+    vi.advanceTimersByTime(250)
+  })
+
+  expect(FakeSpeechRecognition.latest).not.toBe(firstRecognition)
+  expect(FakeSpeechRecognition.latest?.started).toBe(true)
+  expect(result.current.status).toBe('listening')
+  expect(result.current.transcript).toBe('帮我定一个一分钟之后的闹铃')
   vi.useRealTimers()
 })

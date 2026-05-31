@@ -1,73 +1,230 @@
 # Vocalendar
 
-Vocalendar is a voice-first calendar assistant. This repository is organized as a
-monorepo with a React web app and a FastAPI backend.
+Vocalendar 是一个语音优先的日历助手。用户可以通过自然语言创建、查看和删除日程，并将日程同步到 Google Calendar。
 
-## Apps
+项目采用 monorepo 结构：
 
-- `apps/web`: React, TypeScript, Vite, and Tailwind CSS.
-- `apps/api`: FastAPI, SQLAlchemy, Alembic, and PostgreSQL.
+- `apps/web`：React、TypeScript、Vite、Tailwind CSS 前端。
+- `apps/api`：FastAPI、SQLAlchemy、Alembic 后端。
+- `render.yaml`：Render 部署配置。
+- `docker-compose.yml`：本地 PostgreSQL 开发环境。
 
-## Local Development
+## 功能
 
-Prerequisites:
+- GitHub 登录和游客会话。
+- 语音识别日程命令。
+- 文本命令创建、查看、删除日程。
+- Google Calendar 授权同步。
+- 今日概览、时间轴抽屉和日程高亮。
+- 浏览器通知和提醒音。
+- 默认日程结束时间为开始后 1 分钟。
+- 默认日历时区为 `Asia/Shanghai`。
 
-- Node.js 24
+## 环境要求
+
+- Node.js 24.x
 - Python 3.11
-- Docker
+- Docker Desktop，可选，用于本地 PostgreSQL
+- Chrome 或 Edge，语音识别依赖浏览器 Web Speech API
 
-Install frontend dependencies:
+## 本地启动
+
+### 1. 安装前端依赖
 
 ```powershell
 npm --prefix apps/web install
 ```
 
-Create the backend virtual environment and install dependencies:
+### 2. 创建后端虚拟环境
 
 ```powershell
 python -m venv apps/api/.venv
 apps/api/.venv/Scripts/python -m pip install -e "apps/api[dev]"
 ```
 
-Copy the environment file and start PostgreSQL:
+### 3. 配置环境变量
 
 ```powershell
 Copy-Item .env.example .env
+```
+
+默认 `.env.example` 使用 SQLite：
+
+```text
+DATABASE_URL=sqlite:///apps/api/local-dev.db
+```
+
+如果要使用本地 PostgreSQL，先启动数据库：
+
+```powershell
 docker compose up -d postgres
 ```
 
-Run the apps:
+然后将 `.env` 中的 `DATABASE_URL` 改为 PostgreSQL 连接串。
+
+### 4. 启动后端
+
+```powershell
+apps/api/.venv/Scripts/python -m uvicorn app.main:app --app-dir apps/api --reload --host 127.0.0.1 --port 8000
+```
+
+健康检查：
+
+```text
+http://127.0.0.1:8000/health
+```
+
+### 5. 启动前端
 
 ```powershell
 npm run dev:web
-apps/api/.venv/Scripts/python -m uvicorn app.main:app --app-dir apps/api --reload
 ```
 
-The web app runs on `http://127.0.0.1:5175` by default.
+前端地址：
 
-## Verification
+```text
+http://127.0.0.1:5175/
+```
+
+## 环境变量
+
+### 前端
+
+```text
+VITE_API_URL=http://localhost:8000
+```
+
+### 后端
+
+```text
+API_ENV=local
+API_CORS_ORIGINS=http://localhost:5175,http://127.0.0.1:5175
+WEB_APP_URL=http://127.0.0.1:5175/
+DATABASE_URL=sqlite:///apps/api/local-dev.db
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+GITHUB_OAUTH_REDIRECT_URI=http://localhost:8000/auth/github/callback
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8000/integrations/google/callback
+JWT_SECRET=replace-this-in-production
+TOKEN_ENCRYPTION_SECRET=replace-this-in-production
+CALENDAR_TIME_ZONE=Asia/Shanghai
+```
+
+GitHub 登录需要在 GitHub OAuth App 中配置回调：
+
+```text
+http://localhost:8000/auth/github/callback
+```
+
+Google Calendar 同步需要在 Google Cloud Console 中配置回调：
+
+```text
+http://localhost:8000/integrations/google/callback
+```
+
+## 常用命令
+
+前端：
 
 ```powershell
-npm run lint:web
+npm run dev:web
 npm run test:web
+npm run lint:web
 npm run build:web
-apps/api/.venv/Scripts/python -m ruff check apps/api
-apps/api/.venv/Scripts/python -m pytest apps/api/tests
 ```
 
-## Render Deployment
+后端：
 
-- Web: Render Static Site
-  - Root directory: `apps/web`
-  - Build command: `npm install && npm run build`
-  - Publish directory: `dist`
-- API: Render Web Service
-  - Root directory: `apps/api`
-  - Build command: `pip install -e ".[dev]"`
-  - Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-- Database: Render Postgres
-  - Set `DATABASE_URL` on the API service.
+```powershell
+apps/api/.venv/Scripts/python -m pytest apps/api/tests
+apps/api/.venv/Scripts/python -m ruff check apps/api
+```
 
-Set `VITE_API_URL` on the web service to the deployed public API URL. Set
-`API_CORS_ORIGINS` on the API service to the deployed public web URL, and set
-`WEB_APP_URL` to the primary web entry URL used for OAuth callback fallback.
+或者进入后端目录执行：
+
+```powershell
+cd apps/api
+.venv/Scripts/python -m pytest
+.venv/Scripts/python -m ruff check .
+```
+
+## 数据库迁移
+
+项目使用 Alembic 管理数据库结构。
+
+```powershell
+cd apps/api
+../api/.venv/Scripts/python -m alembic upgrade head
+```
+
+如果使用 SQLite 本地开发，首次运行接口前也可以执行迁移，确保表结构完整。
+
+## Render 部署
+
+仓库包含 `render.yaml`，可以在 Render 中通过 Blueprint 创建：
+
+- `vocalendar-web`：Static Site
+- `vocalendar-api`：Python Web Service
+- `vocalendar-db`：PostgreSQL
+
+部署时需要设置生产环境变量。
+
+前端：
+
+```text
+VITE_API_URL=https://你的后端地址.onrender.com
+```
+
+后端：
+
+```text
+API_ENV=production
+API_CORS_ORIGINS=https://你的前端地址.onrender.com
+WEB_APP_URL=https://你的前端地址.onrender.com/
+GITHUB_CLIENT_ID=你的 GitHub OAuth Client ID
+GITHUB_CLIENT_SECRET=你的 GitHub OAuth Client Secret
+GITHUB_OAUTH_REDIRECT_URI=https://你的后端地址.onrender.com/auth/github/callback
+GOOGLE_CLIENT_ID=你的 Google OAuth Client ID
+GOOGLE_CLIENT_SECRET=你的 Google OAuth Client Secret
+GOOGLE_OAUTH_REDIRECT_URI=https://你的后端地址.onrender.com/integrations/google/callback
+JWT_SECRET=生产强密钥
+TOKEN_ENCRYPTION_SECRET=生产强密钥
+CALENDAR_TIME_ZONE=Asia/Shanghai
+DATABASE_URL=Render PostgreSQL 自动注入
+```
+
+生产 OAuth 平台也要配置对应的 HTTPS 回调地址。
+
+首次部署后需要执行数据库迁移：
+
+```powershell
+alembic upgrade head
+```
+
+也可以将 API 的 Render Build Command 调整为：
+
+```text
+pip install -e ".[dev]" && alembic upgrade head
+```
+
+## 语音命令示例
+
+```text
+添加提醒 2026-06-01 09:30 产品评审
+明天下午3点和张三开会
+下周三上午10点产品评审
+帮我定一个一分钟之后的闹铃
+查看今天提醒
+删除提醒 产品评审
+把刚刚添加的闹钟删掉
+```
+
+## 注意事项
+
+- 语音识别需要 HTTPS 或本地 `localhost/127.0.0.1` 环境。
+- 浏览器需要允许麦克风权限。
+- 浏览器通知和提醒音需要用户主动授权或点击启用。
+- Google Calendar 同步依赖 Google OAuth 授权。
+- 本地数据库、日志和运行缓存不应提交到 Git。

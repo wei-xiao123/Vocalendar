@@ -489,12 +489,8 @@ export function MainHub({
             <div className="mt-3 min-h-[72px] w-[min(92vw,420px)] rounded-[24px] border border-white/80 bg-[#FAF8F5]/90 px-5 py-4 text-center shadow-[0_6px_24px_rgba(0,0,0,0.03)]">
               <p className="text-sm font-medium text-[#5D554D]" aria-live="polite">
                 {hasVoiceText ? (
-                  isSendingCommand || assistantResponse ? (
-                    assistantResponse ? (
-                      assistantResponse.message ?? getAssistantFallbackMessage(assistantResponse)
-                    ) : (
-                      '正在执行命令...'
-                    )
+                  isSendingCommand ? (
+                    '正在执行命令...'
                   ) : (
                   <>
                     {voiceState.transcript}

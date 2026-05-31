@@ -39,6 +39,10 @@ type SpeechRecognitionLike = {
   stop: () => void
 }
 
+type StartRecognitionOptions = {
+  resetTranscript?: boolean
+}
+
 declare global {
   interface Window {
     SpeechRecognition?: SpeechRecognitionConstructor
@@ -80,7 +84,9 @@ export function useSpeechRecognition(
   } = options
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
   const restartTimeoutRef = useRef<number | null>(null)
-  const startRecognitionRef = useRef<() => void>(() => {})
+  const startRecognitionRef = useRef<(options?: StartRecognitionOptions) => void>(
+    () => {},
+  )
   const shouldListenRef = useRef(false)
   const [transcript, setTranscript] = useState('')
   const [interimTranscript, setInterimTranscript] = useState('')
@@ -118,13 +124,14 @@ export function useSpeechRecognition(
         recognition.onresult = null
         recognition.abort()
         recognitionRef.current = null
-        startRecognitionRef.current()
+        startRecognitionRef.current({ resetTranscript: false })
       }, delayMs)
     },
     [clearRestartTimeout],
   )
 
-  const startRecognition = useCallback(() => {
+  const startRecognition = useCallback((options: StartRecognitionOptions = {}) => {
+    const { resetTranscript: shouldResetTranscript = true } = options
     const RecognitionConstructor = getRecognitionConstructor()
     if (!RecognitionConstructor) {
       setStatus('unsupported')
@@ -165,9 +172,10 @@ export function useSpeechRecognition(
       if (isTransientRecognitionError(event.error)) {
         setErrorMessage(null)
         setStatus('listening')
-        if (shouldForceRestartRecognition(event.error)) {
-          scheduleRecognitionRestart(recognition)
-        }
+        scheduleRecognitionRestart(
+          recognition,
+          getRecognitionRestartDelayMs(event.error),
+        )
         return
       }
       shouldListenRef.current = false
@@ -188,11 +196,20 @@ export function useSpeechRecognition(
     }
 
     recognitionRef.current = recognition
-    setTranscript('')
+    if (shouldResetTranscript) {
+      setTranscript('')
+    }
     setInterimTranscript('')
     setErrorMessage(null)
     setStatus('listening')
-    recognition.start()
+    try {
+      recognition.start()
+    } catch (error) {
+      recognitionRef.current = null
+      shouldListenRef.current = false
+      setStatus('error')
+      setErrorMessage(getSpeechRecognitionStartErrorMessage(error))
+    }
   }, [
     clearRestartTimeout,
     continuous,
@@ -216,7 +233,7 @@ export function useSpeechRecognition(
 
   const start = useCallback(() => {
     shouldListenRef.current = true
-    startRecognition()
+    startRecognition({ resetTranscript: true })
   }, [startRecognition])
 
   useEffect(() => {
@@ -266,10 +283,20 @@ function getSpeechRecognitionErrorMessage(
   }
 }
 
+function getSpeechRecognitionStartErrorMessage(error: unknown): string {
+  if (error instanceof DOMException && error.name === 'InvalidStateError') {
+    return '语音识别正在启动，请稍后再试。'
+  }
+  return '语音识别启动失败，请重试。'
+}
+
 function isTransientRecognitionError(error: string | undefined): boolean {
   return error === 'aborted' || error === 'network' || error === 'no-speech'
 }
 
-function shouldForceRestartRecognition(error: string | undefined): boolean {
-  return error === 'aborted' || error === 'network'
+function getRecognitionRestartDelayMs(error: string | undefined): number {
+  if (error === 'no-speech') {
+    return 1000
+  }
+  return 250
 }

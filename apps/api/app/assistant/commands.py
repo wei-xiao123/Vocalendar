@@ -117,7 +117,7 @@ REMINDER_OFFSET_PATTERN = re.compile(
 RELATIVE_OFFSET_DATETIME_PATTERN = re.compile(
     r"(?P<amount>\d+|[零〇一二两三四五六七八九十]{1,3})"
     r"(?P<unit>分钟|分|小时|个小时)"
-    r"后(?:的)?(?:响的)?"
+    r"(?:之)?后(?:的)?(?:响的)?"
 )
 TITLE_EDGE_PATTERN = re.compile(r"^[\s，,：:的。\.]+|[\s，,：:的。\.]+$")
 

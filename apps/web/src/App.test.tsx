@@ -671,6 +671,56 @@ it('shows the assistant response after executing a visible voice transcript', as
   expect(await screen.findAllByText('已创建日程。')).not.toHaveLength(0)
 })
 
+it('shows new voice text instead of the previous assistant response', async () => {
+  storeSession()
+  const resetTranscript = vi.fn()
+  useSpeechRecognitionMock.mockReturnValue({
+    errorMessage: null,
+    interimTranscript: '',
+    isListening: false,
+    resetTranscript,
+    isSupported: true,
+    start: vi.fn(),
+    status: 'idle',
+    stop: vi.fn(),
+    transcript: '查看提醒',
+  })
+  sendAssistantCommandMock.mockResolvedValue({
+    action: 'list_events',
+    confidence: 0.8,
+    text: '查看提醒',
+    parameters: {},
+    message: '找到 0 个日程。',
+    events: [],
+  })
+
+  const { rerender } = render(<App />)
+
+  expect(await screen.findByText('查看提醒')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '执行语音命令' }))
+  expect(await screen.findAllByText('找到 0 个日程。')).not.toHaveLength(0)
+
+  useSpeechRecognitionMock.mockReturnValue({
+    errorMessage: null,
+    interimTranscript: '帮我定一个一分钟之后的闹铃',
+    isListening: true,
+    resetTranscript,
+    isSupported: true,
+    start: vi.fn(),
+    status: 'listening',
+    stop: vi.fn(),
+    transcript: '',
+  })
+  rerender(<App />)
+
+  expect(
+    screen.getByText('帮我定一个一分钟之后的闹铃'),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: '执行语音命令' }),
+  ).toBeEnabled()
+})
+
 it('renders assistant command controls for signed in users', async () => {
   storeSession()
 
