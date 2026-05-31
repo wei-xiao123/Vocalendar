@@ -33,6 +33,8 @@ export type CalendarEvent = {
   reminder_at: string | null
   status: string
   source_text: string | null
+  sync_state?: string | null
+  sync_error?: string | null
 }
 
 export type AssistantEventResult = {
@@ -43,6 +45,8 @@ export type AssistantEventResult = {
   reminder_at?: string | null
   status: string
   source_text?: string | null
+  sync_state?: string | null
+  sync_error?: string | null
 }
 
 export type AssistantCommandResponse = {

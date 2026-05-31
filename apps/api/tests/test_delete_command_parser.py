@@ -42,6 +42,20 @@ def test_parse_delete_command_with_next_week_weekday() -> None:
     }
 
 
+def test_parse_delete_command_with_colloquial_alarm_phrase() -> None:
+    result = parse_assistant_command("把刚刚那个闹钟日程给删掉")
+
+    assert result.action == "delete_event"
+    assert result.parameters == {"title": "闹钟"}
+
+
+def test_parse_delete_command_with_speech_intro() -> None:
+    result = parse_assistant_command("我说把刚刚那个闹钟日程给删掉")
+
+    assert result.action == "delete_event"
+    assert result.parameters == {"title": "闹钟"}
+
+
 def test_parse_delete_command_without_title() -> None:
     result = parse_assistant_command("删除提醒")
 

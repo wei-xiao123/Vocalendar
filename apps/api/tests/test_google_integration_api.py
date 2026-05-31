@@ -173,3 +173,58 @@ def test_google_access_token_accepts_naive_expiry_from_sqlite() -> None:
     )
 
     assert get_valid_google_access_token(connection, settings) == "google-access-token"
+
+
+def test_google_event_creation_uses_default_reminders(monkeypatch) -> None:
+    from app.calendar.google import create_google_event
+
+    captured_request = {}
+    settings = integration_settings()
+    connection = CalendarConnection(
+        user_id=1,
+        provider="google",
+        calendar_id="primary",
+        access_token=encrypt_text("google-access-token", settings),
+        token_expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+
+    def fake_request(method, url, **kwargs):
+        captured_request["method"] = method
+        captured_request["url"] = url
+        captured_request["json"] = kwargs["json"]
+
+        class FakeResponse:
+            status_code = 201
+
+            @staticmethod
+            def json():
+                return {
+                    "id": "google-event-1",
+                    "summary": "闹钟",
+                    "status": "confirmed",
+                    "start": {"dateTime": "2026-05-31T12:29:00Z"},
+                    "end": {"dateTime": "2026-05-31T12:30:00Z"},
+                    "updated": "2026-05-31T12:00:00Z",
+                }
+
+        return FakeResponse()
+
+    monkeypatch.setattr("app.calendar.google.httpx.request", fake_request)
+
+    create_google_event(
+        connection,
+        title="闹钟",
+        starts_at=datetime(2026, 5, 31, 20, 29),
+        ends_at=datetime(2026, 5, 31, 20, 30),
+        settings=settings,
+    )
+
+    assert captured_request["method"] == "POST"
+    assert captured_request["json"]["summary"] == "闹钟"
+    assert captured_request["json"]["start"] == {
+        "dateTime": "2026-05-31T20:29:00+00:00"
+    }
+    assert captured_request["json"]["end"] == {
+        "dateTime": "2026-05-31T20:30:00+00:00"
+    }
+    assert captured_request["json"]["reminders"] == {"useDefault": True}

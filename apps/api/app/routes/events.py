@@ -38,6 +38,8 @@ class EventResponse(BaseModel):
     reminder_at: datetime | None
     status: str
     source_text: str | None
+    sync_state: str
+    sync_error: str | None
 
 
 def _to_event_response(event: Event) -> EventResponse:
@@ -50,6 +52,8 @@ def _to_event_response(event: Event) -> EventResponse:
         reminder_at=event.reminder_at,
         status=event.status,
         source_text=event.source_text,
+        sync_state=event.sync_state,
+        sync_error=event.sync_error,
     )
 
 

@@ -270,6 +270,7 @@ def test_assistant_add_command_creates_event(monkeypatch) -> None:
             "id": 1,
             "title": "产品评审",
             "starts_at": "2026-06-01T09:30:00",
+            "ends_at": "2026-06-01T09:31:00",
             "status": "scheduled",
             "source_text": "添加提醒 2026-06-01 09:30 产品评审",
         },
@@ -313,6 +314,7 @@ def test_assistant_add_command_creates_event_with_reminder_time(monkeypatch) -> 
             "id": 1,
             "title": "产品评审",
             "starts_at": "2026-06-01T09:30:00",
+            "ends_at": "2026-06-01T09:31:00",
             "reminder_at": "2026-06-01T09:15:00",
             "status": "scheduled",
             "source_text": "添加提醒 2026-06-01 09:30 提前15分钟提醒我产品评审",
@@ -407,6 +409,50 @@ def test_assistant_delete_command_deletes_current_user_event(monkeypatch) -> Non
         assert [(event.user_id, event.title) for event in events] == [
             (2, "产品评审")
         ]
+
+
+def test_assistant_delete_command_deletes_colloquial_alarm(monkeypatch) -> None:
+    TestingSessionLocal = build_test_session()
+    with TestingSessionLocal() as session:
+        session.add(User(username="octocat", is_guest=False))
+        session.flush()
+        session.add(
+            Event(
+                user_id=1,
+                title="闹钟",
+                starts_at=datetime(2026, 5, 31, 20, 29),
+            )
+        )
+        session.commit()
+
+    monkeypatch.setattr("app.routes.assistant.SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr("app.routes.auth.get_settings", auth_settings)
+    token = create_access_token("1", auth_settings())
+    client = TestClient(app)
+
+    response = client.post(
+        "/assistant/commands",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": "把刚刚那个闹钟日程给删掉"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "delete_event",
+        "confidence": 0.85,
+        "text": "把刚刚那个闹钟日程给删掉",
+        "parameters": {"title": "闹钟"},
+        "message": "已删除日程。",
+        "event": {
+            "id": 1,
+            "title": "闹钟",
+            "starts_at": "2026-05-31T20:29:00",
+            "status": "scheduled",
+        },
+    }
+
+    with TestingSessionLocal() as session:
+        assert session.scalars(select(Event)).all() == []
 
 
 def test_assistant_delete_command_filters_by_range(monkeypatch) -> None:

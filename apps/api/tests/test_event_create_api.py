@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -75,6 +75,8 @@ def test_create_event_persists_event_for_current_user(monkeypatch) -> None:
         "reminder_at": "2026-05-31T08:50:00",
         "status": "scheduled",
         "source_text": "明天九点提醒我开会",
+        "sync_state": "local_only",
+        "sync_error": None,
     }
 
     with TestingSessionLocal() as session:
@@ -82,3 +84,38 @@ def test_create_event_persists_event_for_current_user(monkeypatch) -> None:
         assert event.user_id == 1
         assert event.title == "Team sync"
         assert event.starts_at == datetime(2026, 5, 31, 9, 0)
+        assert event.ends_at == datetime(2026, 5, 31, 9, 30)
+
+
+def test_create_event_defaults_missing_end_time_to_one_minute(
+    monkeypatch,
+) -> None:
+    TestingSessionLocal = build_test_session()
+    with TestingSessionLocal() as session:
+        session.add(User(username="octocat", is_guest=False))
+        session.commit()
+
+    monkeypatch.setattr("app.routes.events.SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr("app.routes.auth.get_settings", auth_settings)
+    token = create_access_token("1", auth_settings())
+    client = TestClient(app)
+
+    response = client.post(
+        "/events",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "title": "闹钟",
+            "starts_at": "2026-05-31T20:29:00",
+            "source_text": "帮我定一个三分钟后的闹钟。",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["starts_at"] == "2026-05-31T20:29:00"
+    assert payload["ends_at"] == "2026-05-31T20:30:00"
+    assert payload["sync_state"] == "local_only"
+
+    with TestingSessionLocal() as session:
+        event = session.scalars(select(Event)).one()
+        assert event.ends_at == event.starts_at + timedelta(minutes=1)

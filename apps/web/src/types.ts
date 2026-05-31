@@ -8,5 +8,6 @@ export type UiCalendarEvent = {
   reminderText?: string | null
   startTime: string
   status?: string
+  syncText?: string | null
   title: string
 }

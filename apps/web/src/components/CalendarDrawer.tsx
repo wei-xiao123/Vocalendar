@@ -353,6 +353,9 @@ function EventCard({
         {event.reminderText ? (
           <p className="mt-1 text-xs text-[#7AA68B]">{event.reminderText}</p>
         ) : null}
+        {event.syncText ? (
+          <p className="mt-1 text-xs text-[#7AA68B]">{event.syncText}</p>
+        ) : null}
       </div>
 
       <div className="ml-3 flex shrink-0 items-center gap-2">
