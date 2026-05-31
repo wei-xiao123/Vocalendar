@@ -9,8 +9,23 @@ ADD_COMMAND_PREFIXES = (
     "创建提醒",
     "提醒我",
     "帮我添加提醒",
+    "帮我定",
+    "帮我设置",
+    "定一个",
+    "设置提醒",
 )
-ADD_COMMAND_KEYWORDS = ("添加", "新增", "创建", "提醒我", "加个", "加一个")
+ADD_COMMAND_KEYWORDS = (
+    "添加",
+    "新增",
+    "创建",
+    "提醒我",
+    "加个",
+    "加一个",
+    "定一个",
+    "设置",
+    "闹钟",
+    "闹铃",
+)
 LIST_COMMAND_KEYWORDS = ("查看", "列出", "有哪些", "有什么", "查一下", "看看")
 LIST_COMMAND_OBJECTS = ("提醒", "日程", "安排")
 LIST_RANGE_KEYWORDS = {
@@ -94,6 +109,11 @@ REMINDER_OFFSET_PATTERN = re.compile(
     r"提前(?P<amount>\d+|[零〇一二两三四五六七八九十]{1,3})"
     r"(?P<unit>分钟|分|小时|个小时)"
 )
+RELATIVE_OFFSET_DATETIME_PATTERN = re.compile(
+    r"(?P<amount>\d+|[零〇一二两三四五六七八九十]{1,3})"
+    r"(?P<unit>分钟|分|小时|个小时)"
+    r"后(?:的)?(?:响的)?"
+)
 TITLE_EDGE_PATTERN = re.compile(r"^[\s，,：:的。\.]+|[\s，,：:的。\.]+$")
 
 
@@ -170,6 +190,7 @@ def _parse_add_command(
 ) -> AssistantCommandResponse:
     parameters: dict[str, str] = {}
     remaining_title = payload
+    has_alarm_object = "闹钟" in original_text or "闹铃" in original_text
     reminder_offset = _extract_reminder_offset(payload)
     if reminder_offset is not None:
         remaining_title = (
@@ -217,6 +238,22 @@ def _parse_add_command(
                             + remaining_title[today_time_match.end() :]
                         ).strip(" ，,：:")
 
+    if "starts_at" not in parameters:
+        relative_offset_match = RELATIVE_OFFSET_DATETIME_PATTERN.search(
+            remaining_title
+        )
+        if relative_offset_match is not None:
+            starts_at = _normalize_relative_offset_datetime(
+                relative_offset_match,
+                now,
+            )
+            if starts_at is not None:
+                parameters["starts_at"] = starts_at
+                remaining_title = (
+                    remaining_title[: relative_offset_match.start()]
+                    + remaining_title[relative_offset_match.end() :]
+                ).strip(" ，,：:")
+
     starts_at = _parse_datetime_parameter(parameters.get("starts_at"))
     if starts_at is not None and reminder_offset is not None:
         parameters["reminder_at"] = (
@@ -226,6 +263,8 @@ def _parse_add_command(
     remaining_title = _clean_add_title(remaining_title)
     if remaining_title:
         parameters["title"] = remaining_title
+    elif has_alarm_object and starts_at is not None:
+        parameters["title"] = "闹钟"
 
     return AssistantCommandResponse(
         action="add_event",
@@ -384,6 +423,19 @@ def _normalize_weekday_datetime(
     ).isoformat()
 
 
+def _normalize_relative_offset_datetime(
+    match: re.Match[str],
+    now: datetime,
+) -> str | None:
+    amount = _parse_zh_number(match.group("amount"))
+    if amount is None:
+        return None
+
+    unit = match.group("unit")
+    duration = timedelta(hours=amount) if "小时" in unit else timedelta(minutes=amount)
+    return (now + duration).replace(microsecond=0).isoformat()
+
+
 def _parse_minute(minute_text: str | None, colon_minute_text: str | None) -> int | None:
     if colon_minute_text is not None:
         return int(colon_minute_text)
@@ -480,18 +532,29 @@ def _clean_add_title(value: str) -> str:
         "日志提醒",
         "日程提醒",
         "我现在",
+        "我要",
         "有一个",
         "有个",
         "要开",
         "你给我",
         "帮我",
-        "提醒我",
-        "提醒",
         "加一个",
         "加个",
+        "定一个",
+        "定个",
+        "设置一个",
+        "设置",
+        "一个",
+        "个",
+        "响的",
+        "闹钟",
+        "闹铃",
+        "提醒我",
+        "提醒",
         "添加",
         "新增",
         "创建",
+        "加",
     ):
         title = title.replace(phrase, " ")
     return _normalize_title_text(title)

@@ -180,5 +180,23 @@ it('sets error status on recognition errors', () => {
   })
 
   expect(result.current.status).toBe('error')
-  expect(result.current.errorMessage).toBe('not-allowed')
+  expect(result.current.errorMessage).toBe(
+    '麦克风权限被拒绝，请允许浏览器使用麦克风。',
+  )
+})
+
+it('describes network recognition errors in Chinese', () => {
+  const { result } = renderHook(() => useSpeechRecognition())
+
+  act(() => {
+    result.current.start()
+  })
+  act(() => {
+    FakeSpeechRecognition.latest?.emitError('network')
+  })
+
+  expect(result.current.status).toBe('error')
+  expect(result.current.errorMessage).toBe(
+    '语音识别网络连接失败，请检查浏览器语音服务或网络后重试。',
+  )
 })

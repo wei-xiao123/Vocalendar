@@ -24,6 +24,7 @@ type GoogleConnectionViewState = {
   calendarId: string | null
   connected: boolean
   error: string | null
+  hasLoaded: boolean
   isLoading: boolean
   lastSyncedAt: string | null
 }
@@ -112,10 +113,10 @@ export function MainHub({
   voiceState,
 }: MainHubProps) {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
-  const [showGoogleModal, setShowGoogleModal] = useState(
-    () =>
-      shouldPromptGoogleCalendar && !isGuest && !googleConnectionState.connected,
-  )
+  const [isGoogleModalManuallyOpen, setIsGoogleModalManuallyOpen] =
+    useState(false)
+  const [hasDismissedGooglePrompt, setHasDismissedGooglePrompt] =
+    useState(false)
   const [commandText, setCommandText] = useState('')
   const [isRequestingPermission, setIsRequestingPermission] = useState(false)
   const highlightedEventId = assistantResponse?.event?.id
@@ -123,15 +124,21 @@ export function MainHub({
     : null
   const todayEvents = events.filter((event) => event.dateStr === 'Today')
   const displayName = user.display_name ?? user.username ?? 'Guest User'
-  const hasVoiceText =
-    voiceState.transcript.length > 0 || voiceState.interimTranscript.length > 0
-  const finalVoiceCommand = voiceState.transcript.trim()
+  const visibleVoiceCommand = [voiceState.transcript, voiceState.interimTranscript]
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(' ')
+  const hasVoiceText = visibleVoiceCommand.length > 0
   const canSendTypedCommand = commandText.trim().length > 0 && !isSendingCommand
-  const canSendVoiceCommand = finalVoiceCommand.length > 0 && !isSendingCommand
+  const canSendVoiceCommand = visibleVoiceCommand.length > 0 && !isSendingCommand
   const notificationStatus = getNotificationStatusText(notificationPermission)
   const voiceButtonLabel = voiceState.isListening ? '停止识别' : '开始识别'
   const canRequestNotificationPermission =
     'Notification' in window && notificationPermission === 'default'
+  const isGoogleModalVisible =
+    !googleConnectionState.connected &&
+    (isGoogleModalManuallyOpen ||
+      (shouldPromptGoogleCalendar && !isGuest && !hasDismissedGooglePrompt))
 
   function handleOrbClick() {
     if (!voiceState.isSupported) {
@@ -298,7 +305,7 @@ export function MainHub({
 
             <GoogleStatusCapsule
               googleConnectionState={googleConnectionState}
-              onConnect={() => setShowGoogleModal(true)}
+              onConnect={() => setIsGoogleModalManuallyOpen(true)}
             />
 
             <form
@@ -325,12 +332,20 @@ export function MainHub({
             <div className="mt-3 min-h-[72px] w-[min(92vw,420px)] rounded-[24px] border border-white/80 bg-[#FAF8F5]/90 px-5 py-4 text-center shadow-[0_6px_24px_rgba(0,0,0,0.03)]">
               <p className="text-sm font-medium text-[#5D554D]" aria-live="polite">
                 {hasVoiceText ? (
+                  isSendingCommand || assistantResponse ? (
+                    assistantResponse ? (
+                      assistantResponse.message ?? getAssistantFallbackMessage(assistantResponse)
+                    ) : (
+                      '正在执行命令...'
+                    )
+                  ) : (
                   <>
                     {voiceState.transcript}
                     {voiceState.interimTranscript ? (
                       <span className="text-[#9A9287]">{voiceState.interimTranscript}</span>
                     ) : null}
                   </>
+                  )
                 ) : assistantResponse ? (
                   assistantResponse.message ?? getAssistantFallbackMessage(assistantResponse)
                 ) : (
@@ -341,7 +356,7 @@ export function MainHub({
                 <button
                   className="rounded-full border border-[#E4DDD2] bg-white px-3 py-1.5 text-xs font-semibold text-[#5D554D] transition hover:text-[#3D362D] disabled:cursor-not-allowed disabled:opacity-50"
                   disabled={!canSendVoiceCommand}
-                  onClick={() => onSendAssistantCommand(finalVoiceCommand)}
+                  onClick={() => onSendAssistantCommand(visibleVoiceCommand)}
                   type="button"
                 >
                   {isSendingCommand ? '执行中...' : '执行语音命令'}
@@ -526,7 +541,7 @@ export function MainHub({
       />
 
       <AnimatePresence>
-        {showGoogleModal ? (
+        {isGoogleModalVisible ? (
           <motion.div
             animate={{ opacity: 1 }}
             className="absolute inset-0 z-50 flex items-center justify-center bg-[#2B2824]/40 p-4 backdrop-blur-md"
@@ -569,7 +584,10 @@ export function MainHub({
                 ) : null}
                 <button
                   className="w-full py-3.5 font-medium text-[#9A9287] transition hover:text-[#5D554D]"
-                  onClick={() => setShowGoogleModal(false)}
+                  onClick={() => {
+                    setHasDismissedGooglePrompt(true)
+                    setIsGoogleModalManuallyOpen(false)
+                  }}
                   type="button"
                 >
                   稍后连接

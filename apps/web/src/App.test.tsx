@@ -270,6 +270,23 @@ it('does not reopen the Google authorization modal after a successful callback',
   ).not.toBeInTheDocument()
 })
 
+it('does not show the Google authorization modal when the stored session is connected', async () => {
+  storeSession()
+  getGoogleConnectionStatusMock.mockResolvedValue({
+    calendar_id: 'primary',
+    connected: true,
+    last_synced_at: '2026-05-31T11:03:00',
+    provider: 'google',
+  })
+
+  render(<App />)
+
+  expect(await screen.findByText('已连接到 Google 日历')).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '继续并授权' }),
+  ).not.toBeInTheDocument()
+})
+
 it('renders Google Calendar connection controls for guest users', async () => {
   createGuestSessionMock.mockResolvedValue({
     access_token: 'guest-token',
@@ -579,7 +596,67 @@ it('sends a final voice transcript as an assistant command', async () => {
   fireEvent.click(screen.getByRole('button', { name: '执行语音命令' }))
 
   expect(sendAssistantCommandMock).toHaveBeenCalledWith('查看提醒', 'stored-token')
-  expect(await screen.findByText('找到 0 个日程。')).toBeInTheDocument()
+  expect(await screen.findAllByText('找到 0 个日程。')).not.toHaveLength(0)
+})
+
+it('sends a visible interim voice transcript as an assistant command', async () => {
+  storeSession()
+  useSpeechRecognitionMock.mockReturnValue({
+    errorMessage: null,
+    interimTranscript: '帮我定一个二分钟后响的闹铃我要去开会。',
+    isListening: true,
+    isSupported: true,
+    start: vi.fn(),
+    status: 'listening',
+    stop: vi.fn(),
+    transcript: '',
+  })
+
+  render(<App />)
+
+  expect(
+    await screen.findByText('帮我定一个二分钟后响的闹铃我要去开会。'),
+  ).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '执行语音命令' }))
+
+  expect(sendAssistantCommandMock).toHaveBeenCalledWith(
+    '帮我定一个二分钟后响的闹铃我要去开会。',
+    'stored-token',
+  )
+})
+
+it('shows the assistant response after executing a visible voice transcript', async () => {
+  storeSession()
+  useSpeechRecognitionMock.mockReturnValue({
+    errorMessage: null,
+    interimTranscript: '帮我定一个三分钟后的闹钟。',
+    isListening: false,
+    isSupported: true,
+    start: vi.fn(),
+    status: 'idle',
+    stop: vi.fn(),
+    transcript: '',
+  })
+  sendAssistantCommandMock.mockResolvedValue({
+    action: 'add_event',
+    confidence: 0.85,
+    text: '帮我定一个三分钟后的闹钟。',
+    parameters: {},
+    message: '已创建日程。',
+    event: {
+      id: 10,
+      title: '闹钟',
+      starts_at: '2026-05-31T19:43:00',
+      status: 'scheduled',
+    },
+  })
+
+  render(<App />)
+
+  expect(await screen.findByText('帮我定一个三分钟后的闹钟。')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '执行语音命令' }))
+
+  expect(await screen.findAllByText('已创建日程。')).not.toHaveLength(0)
 })
 
 it('renders assistant command controls for signed in users', async () => {
