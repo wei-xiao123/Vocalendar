@@ -35,6 +35,13 @@ type GoogleConnectionState = {
   lastSyncedAt: string | null
 }
 
+type ReminderSoundState = {
+  enabled: boolean
+  error: string | null
+  isSupported: boolean
+  isUnlocking: boolean
+}
+
 const initialEventListState: EventListState = {
   events: [],
   error: null,
@@ -49,12 +56,27 @@ const initialGoogleConnectionState: GoogleConnectionState = {
 }
 
 const MAX_REMINDER_DELAY_MS = 2_147_483_647
+const REMINDER_SOUND_UNLOCK_ERROR = '提醒音启用失败，请与页面交互后重试。'
+
+type AudioContextConstructor = {
+  new (): AudioContext
+}
 
 function getInitialNotificationPermission(): NotificationPermission {
   if (!('Notification' in window)) {
     return 'denied'
   }
   return window.Notification.permission
+}
+
+function getAudioContextConstructor(): AudioContextConstructor | null {
+  const audioWindow = window as Window & {
+    webkitAudioContext?: AudioContextConstructor
+  }
+  if ('AudioContext' in window) {
+    return window.AudioContext as AudioContextConstructor
+  }
+  return audioWindow.webkitAudioContext ?? null
 }
 
 function App() {
@@ -73,6 +95,7 @@ function App() {
     }
   })
   const [isCreatingGuest, setIsCreatingGuest] = useState(false)
+  const [isStartingGitHubLogin, setIsStartingGitHubLogin] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(
     oauthCallbackState.errorMessage,
   )
@@ -83,6 +106,14 @@ function App() {
     useState<GoogleConnectionState>(initialGoogleConnectionState)
   const [notificationPermission, setNotificationPermission] =
     useState<NotificationPermission>(() => getInitialNotificationPermission())
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const [reminderSoundState, setReminderSoundState] =
+    useState<ReminderSoundState>(() => ({
+      enabled: false,
+      error: null,
+      isSupported: getAudioContextConstructor() !== null,
+      isUnlocking: false,
+    }))
 
   useEffect(() => {
     if (authToken) {
@@ -96,15 +127,17 @@ function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const authAccessToken = params.get('auth_access_token')
+    const hasAuthError = params.has('auth_error')
     const hasGoogleCallback =
       params.has('google_connected') || params.has('google_error')
 
-    if (!authAccessToken && !hasGoogleCallback) {
+    if (!authAccessToken && !hasGoogleCallback && !hasAuthError) {
       return
     }
 
     const nextUrl = new URL(window.location.href)
     nextUrl.searchParams.delete('auth_access_token')
+    nextUrl.searchParams.delete('auth_error')
     nextUrl.searchParams.delete('google_connected')
     nextUrl.searchParams.delete('google_error')
     window.history.replaceState({}, '', nextUrl.toString())
@@ -128,7 +161,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (!authToken || authToken.user.is_guest) {
+    if (!authToken) {
       return
     }
 
@@ -179,6 +212,8 @@ function App() {
   }
 
   function handleGitHubLogin() {
+    setIsStartingGitHubLogin(true)
+    setErrorMessage(null)
     window.location.assign(getGitHubOAuthStartUrl(apiUrl, getCurrentPageUrl()))
   }
 
@@ -191,8 +226,83 @@ function App() {
     setEventListRefreshKey((current) => current + 1)
   }
 
+  async function playReminderSound() {
+    const audioContext = audioContextRef.current
+    if (!audioContext) {
+      return
+    }
+
+    try {
+      if (audioContext.state !== 'running') {
+        await audioContext.resume()
+      }
+      scheduleReminderSound(audioContext)
+      setReminderSoundState((current) => ({
+        ...current,
+        error: null,
+      }))
+    } catch {
+      setReminderSoundState((current) => ({
+        ...current,
+        enabled: false,
+        error: REMINDER_SOUND_UNLOCK_ERROR,
+      }))
+    }
+  }
+
+  async function handleEnableReminderSound() {
+    const AudioContextCtor = getAudioContextConstructor()
+    if (!AudioContextCtor) {
+      setReminderSoundState({
+        enabled: false,
+        error: '当前浏览器不支持提醒音。',
+        isSupported: false,
+        isUnlocking: false,
+      })
+      return
+    }
+
+    setReminderSoundState((current) => ({
+      ...current,
+      error: null,
+      isUnlocking: true,
+    }))
+
+    try {
+      const audioContext = audioContextRef.current ?? new AudioContextCtor()
+      audioContextRef.current = audioContext
+      if (audioContext.state !== 'running') {
+        await audioContext.resume()
+      }
+      setReminderSoundState({
+        enabled: true,
+        error: null,
+        isSupported: true,
+        isUnlocking: false,
+      })
+    } catch {
+      setReminderSoundState({
+        enabled: false,
+        error: REMINDER_SOUND_UNLOCK_ERROR,
+        isSupported: true,
+        isUnlocking: false,
+      })
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      const audioContext = audioContextRef.current
+      if (!audioContext) {
+        return
+      }
+      void audioContext.close()
+      audioContextRef.current = null
+    }
+  }, [])
+
   async function handleGoogleCalendarConnect() {
-    if (!authToken || authToken.user.is_guest) {
+    if (!authToken) {
       return
     }
 
@@ -248,8 +358,6 @@ function App() {
 
   const displayName =
     authToken?.user.display_name ?? authToken?.user.username ?? 'Guest User'
-  const effectiveGoogleConnectionState =
-    authToken?.user.is_guest ? initialGoogleConnectionState : googleConnectionState
 
   return (
     <main className="app-shell">
@@ -287,13 +395,14 @@ function App() {
               accessToken={authToken.access_token}
               key={authToken.access_token}
               notificationPermission={notificationPermission}
+              onReminderTriggered={playReminderSound}
               refreshKey={eventListRefreshKey}
             />
             <GoogleCalendarPanel
               isGuest={authToken.user.is_guest}
               onConnect={handleGoogleCalendarConnect}
               onDisconnect={handleGoogleCalendarDisconnect}
-              state={effectiveGoogleConnectionState}
+              state={googleConnectionState}
             />
             <AssistantCommandWorkspace
               accessToken={authToken.access_token}
@@ -302,6 +411,11 @@ function App() {
             <NotificationPermissionPanel
               permission={notificationPermission}
               setPermission={setNotificationPermission}
+            />
+            <ReminderSoundPanel
+              onEnable={handleEnableReminderSound}
+              onTest={() => void playReminderSound()}
+              state={reminderSoundState}
             />
           </>
         ) : (
@@ -315,10 +429,11 @@ function App() {
             <div className="auth-actions">
               <button
                 className="primary-button"
+                disabled={isStartingGitHubLogin}
                 type="button"
                 onClick={handleGitHubLogin}
               >
-                GitHub 登录
+                {isStartingGitHubLogin ? '跳转中...' : 'GitHub 登录'}
               </button>
               <button
                 className="secondary-button"
@@ -358,9 +473,7 @@ function GoogleCalendarPanel({
         <p className="section-label">日历集成</p>
         <h2 id="google-calendar-title">Google Calendar</h2>
         <p className="session-meta">
-          {isGuest
-            ? '游客模式暂不支持连接外部日历'
-            : getGoogleConnectionText(state)}
+          {isGuest ? `游客会话，${getGoogleConnectionText(state)}` : getGoogleConnectionText(state)}
         </p>
         {state.lastSyncedAt ? (
           <p className="session-meta">最近同步：{formatDateTime(state.lastSyncedAt)}</p>
@@ -371,7 +484,7 @@ function GoogleCalendarPanel({
           </p>
         ) : null}
       </div>
-      {isGuest ? null : state.connected ? (
+      {state.connected ? (
         <button
           className="secondary-button"
           disabled={state.isLoading}
@@ -437,6 +550,60 @@ function NotificationPermissionPanel({
       >
         {isRequestingPermission ? '请求中...' : '请求通知权限'}
       </button>
+    </section>
+  )
+}
+
+function ReminderSoundPanel({
+  onEnable,
+  onTest,
+  state,
+}: {
+  onEnable: () => void
+  onTest: () => void
+  state: ReminderSoundState
+}) {
+  return (
+    <section className="notification-panel" aria-labelledby="reminder-sound-title">
+      <div className="section-header">
+        <div>
+          <p className="section-label">提醒声音</p>
+          <h2 id="reminder-sound-title">闹钟提示</h2>
+        </div>
+        <span className="notification-status">
+          {getReminderSoundStatusText(state)}
+        </span>
+      </div>
+      <p className="state-message">
+        到提醒时间时会弹出系统通知；如果页面还活着，会同时播放一段提示音。
+      </p>
+      <div className="panel-actions">
+        <button
+          className="secondary-button"
+          disabled={!state.isSupported || state.enabled || state.isUnlocking}
+          onClick={() => void onEnable()}
+          type="button"
+        >
+          {state.isUnlocking
+            ? '启用中...'
+            : state.enabled
+              ? '已启用提醒音'
+              : '启用提醒音'}
+        </button>
+        <button
+          className="secondary-button"
+          disabled={!state.enabled}
+          onClick={onTest}
+          type="button"
+        >
+          测试提醒音
+        </button>
+      </div>
+      {state.error ? (
+        <p className="error-message" role="alert">
+          {state.error}
+        </p>
+      ) : null}
     </section>
   )
 }
@@ -630,6 +797,19 @@ function getNotificationStatusText(
   return '未决定'
 }
 
+function getReminderSoundStatusText(state: ReminderSoundState): string {
+  if (!state.isSupported) {
+    return '不支持'
+  }
+  if (state.isUnlocking) {
+    return '启用中'
+  }
+  if (state.enabled) {
+    return '已启用'
+  }
+  return '未启用'
+}
+
 function VoiceInputControl({
   isSendingCommand,
   onCommand,
@@ -719,10 +899,12 @@ function VoiceInputControl({
 function EventList({
   accessToken,
   notificationPermission,
+  onReminderTriggered,
   refreshKey,
 }: {
   accessToken: string
   notificationPermission: NotificationPermission
+  onReminderTriggered: () => Promise<void>
   refreshKey: number
 }) {
   const [eventListState, setEventListState] = useState<EventListState>(
@@ -772,7 +954,11 @@ function EventList({
 
   const { events, error: eventsError } = eventListState
   const canCreateEvent = title.trim().length > 0 && startsAt.length > 0
-  useReminderNotificationScheduler(events, notificationPermission)
+  useReminderNotificationScheduler(
+    events,
+    notificationPermission,
+    onReminderTriggered,
+  )
 
   async function handleCreateEvent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -981,6 +1167,12 @@ function getOAuthCallbackState(): {
   shouldRefreshEvents: boolean
 } {
   const params = new URLSearchParams(window.location.search)
+  if (params.get('auth_error')) {
+    return {
+      errorMessage: 'GitHub 登录失败，请重试。',
+      shouldRefreshEvents: false,
+    }
+  }
   if (params.get('google_error')) {
     return {
       errorMessage: 'Google 日历同步失败，请稍后重试。',
@@ -996,6 +1188,7 @@ function getOAuthCallbackState(): {
 function useReminderNotificationScheduler(
   events: CalendarEvent[],
   permission: NotificationPermission,
+  onReminderTriggered: () => Promise<void>,
 ) {
   const notifiedEventIdsRef = useRef<Set<number>>(new Set())
 
@@ -1025,6 +1218,7 @@ function useReminderNotificationScheduler(
           tag: `vocalendar-event-${event.id}`,
         })
         notifiedEventIdsRef.current.add(event.id)
+        void onReminderTriggered()
       }, delay)
       return [timeoutId]
     })
@@ -1032,7 +1226,7 @@ function useReminderNotificationScheduler(
     return () => {
       timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId))
     }
-  }, [events, permission])
+  }, [events, onReminderTriggered, permission])
 }
 
 function compareEventsByStart(first: CalendarEvent, second: CalendarEvent) {
@@ -1061,6 +1255,33 @@ function formatDateTime(value: string): string {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value))
+}
+
+function scheduleReminderSound(audioContext: AudioContext) {
+  const beepOffsets = [0, 0.22, 0.44]
+  const frequencies = [880, 1174, 1568]
+  const startAt = audioContext.currentTime + 0.02
+
+  for (const [index, offset] of beepOffsets.entries()) {
+    const oscillator = audioContext.createOscillator()
+    const gainNode = audioContext.createGain()
+    const beepStart = startAt + offset
+    const beepEnd = beepStart + 0.16
+
+    oscillator.type = 'triangle'
+    oscillator.frequency.setValueAtTime(
+      frequencies[index % frequencies.length],
+      beepStart,
+    )
+    gainNode.gain.setValueAtTime(0.0001, beepStart)
+    gainNode.gain.linearRampToValueAtTime(0.22, beepStart + 0.02)
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, beepEnd)
+
+    oscillator.connect(gainNode)
+    gainNode.connect(audioContext.destination)
+    oscillator.start(beepStart)
+    oscillator.stop(beepEnd)
+  }
 }
 
 export default App

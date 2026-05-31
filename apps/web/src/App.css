@@ -269,6 +269,13 @@ h2 {
   gap: 12px;
 }
 
+.panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+}
+
 .voice-button:disabled {
   cursor: not-allowed;
   opacity: 0.65;
@@ -424,6 +431,7 @@ h2 {
   }
 
   .auth-actions,
+  .panel-actions,
   .primary-button,
   .secondary-button,
   .voice-button,
