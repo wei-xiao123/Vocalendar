@@ -204,8 +204,10 @@ it('creates and stores a guest session', async () => {
 
   expect(createGuestSessionMock).toHaveBeenCalledOnce()
   expect(await screen.findByText('Guest User')).toBeInTheDocument()
-  expect(listEventsMock).toHaveBeenCalledWith('guest-token')
-  expect(getGoogleConnectionStatusMock).toHaveBeenCalledWith('guest-token')
+  await waitFor(() => {
+    expect(listEventsMock).toHaveBeenCalledWith('guest-token')
+    expect(getGoogleConnectionStatusMock).toHaveBeenCalledWith('guest-token')
+  })
   expect(window.localStorage.getItem('vocalendar.auth')).toContain('guest-token')
 })
 
