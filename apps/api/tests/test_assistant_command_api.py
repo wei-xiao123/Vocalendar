@@ -343,6 +343,72 @@ def test_assistant_delete_command_deletes_current_user_event(monkeypatch) -> Non
         ]
 
 
+def test_assistant_delete_command_filters_by_range(monkeypatch) -> None:
+    TestingSessionLocal = build_test_session()
+    today = date.today()
+    today_datetime = datetime.combine(today, datetime.min.time()).replace(
+        hour=9,
+        minute=30,
+    )
+    tomorrow_datetime = datetime.combine(
+        today + timedelta(days=1),
+        datetime.min.time(),
+    ).replace(hour=9, minute=30)
+    with TestingSessionLocal() as session:
+        session.add(User(username="octocat", is_guest=False))
+        session.flush()
+        session.add_all(
+            [
+                Event(
+                    user_id=1,
+                    title="产品评审",
+                    starts_at=today_datetime,
+                ),
+                Event(
+                    user_id=1,
+                    title="产品评审",
+                    starts_at=tomorrow_datetime,
+                ),
+            ]
+        )
+        session.commit()
+
+    monkeypatch.setattr("app.routes.assistant.SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr("app.routes.auth.get_settings", auth_settings)
+    token = create_access_token("1", auth_settings())
+    client = TestClient(app)
+
+    response = client.post(
+        "/assistant/commands",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": "删除明天的产品评审提醒"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "delete_event",
+        "confidence": 0.85,
+        "text": "删除明天的产品评审提醒",
+        "parameters": {
+            "range": "tomorrow",
+            "title": "产品评审",
+        },
+        "message": "已删除日程。",
+        "event": {
+            "id": 2,
+            "title": "产品评审",
+            "starts_at": tomorrow_datetime.isoformat(),
+            "status": "scheduled",
+        },
+    }
+
+    with TestingSessionLocal() as session:
+        events = session.scalars(select(Event)).all()
+        assert [(event.title, event.starts_at) for event in events] == [
+            ("产品评审", today_datetime)
+        ]
+
+
 def test_assistant_delete_command_reports_missing_event(monkeypatch) -> None:
     TestingSessionLocal = build_test_session()
     with TestingSessionLocal() as session:

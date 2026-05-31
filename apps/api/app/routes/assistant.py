@@ -98,11 +98,13 @@ def _delete_event_from_command(
         parsed_command.message = "缺少要删除的日程标题。"
         return parsed_command
 
-    statement = (
-        select(Event)
-        .where(Event.user_id == user_id, Event.title == title)
-        .order_by(Event.starts_at.asc(), Event.id.asc())
-    )
+    statement = select(Event).where(Event.user_id == user_id, Event.title == title)
+    range_bounds = _get_range_bounds(parsed_command.parameters.get("range"))
+    if range_bounds is not None:
+        starts_from, starts_to = range_bounds
+        statement = statement.where(Event.starts_at >= starts_from)
+        statement = statement.where(Event.starts_at <= starts_to)
+    statement = statement.order_by(Event.starts_at.asc(), Event.id.asc())
     event = session.scalars(statement).first()
     if event is None:
         parsed_command.message = "未找到匹配日程。"
