@@ -409,6 +409,73 @@ def test_assistant_delete_command_filters_by_range(monkeypatch) -> None:
         ]
 
 
+def test_assistant_delete_command_returns_candidates_for_ambiguous_title(
+    monkeypatch,
+) -> None:
+    TestingSessionLocal = build_test_session()
+    first_datetime = datetime(2026, 6, 1, 9, 30)
+    second_datetime = datetime(2026, 6, 1, 14, 30)
+    with TestingSessionLocal() as session:
+        session.add(User(username="octocat", is_guest=False))
+        session.flush()
+        session.add_all(
+            [
+                Event(
+                    user_id=1,
+                    title="产品评审",
+                    starts_at=first_datetime,
+                ),
+                Event(
+                    user_id=1,
+                    title="产品评审",
+                    starts_at=second_datetime,
+                ),
+            ]
+        )
+        session.commit()
+
+    monkeypatch.setattr("app.routes.assistant.SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr("app.routes.auth.get_settings", auth_settings)
+    token = create_access_token("1", auth_settings())
+    client = TestClient(app)
+
+    response = client.post(
+        "/assistant/commands",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"text": "删除提醒 产品评审"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "action": "delete_event",
+        "confidence": 0.85,
+        "text": "删除提醒 产品评审",
+        "parameters": {"title": "产品评审"},
+        "message": "找到多个匹配日程，请补充更具体的时间。",
+        "events": [
+            {
+                "id": 1,
+                "title": "产品评审",
+                "starts_at": first_datetime.isoformat(),
+                "status": "scheduled",
+            },
+            {
+                "id": 2,
+                "title": "产品评审",
+                "starts_at": second_datetime.isoformat(),
+                "status": "scheduled",
+            },
+        ],
+    }
+
+    with TestingSessionLocal() as session:
+        events = session.scalars(select(Event).order_by(Event.starts_at.asc())).all()
+        assert [event.starts_at for event in events] == [
+            first_datetime,
+            second_datetime,
+        ]
+
+
 def test_assistant_delete_command_reports_missing_event(monkeypatch) -> None:
     TestingSessionLocal = build_test_session()
     with TestingSessionLocal() as session:
