@@ -42,7 +42,10 @@ def oauth_settings() -> Settings:
 def test_github_oauth_callback_requires_complete_config(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.routes.auth.get_settings",
-        lambda: Settings(github_client_id="github-client-id"),
+        lambda: Settings(
+            github_client_id="github-client-id",
+            github_client_secret="",
+        ),
     )
 
     client = TestClient(app)
@@ -51,6 +54,65 @@ def test_github_oauth_callback_requires_complete_config(monkeypatch) -> None:
 
     assert response.status_code == 503
     assert response.json() == {"detail": "GitHub OAuth is not configured"}
+
+
+def test_github_oauth_callback_surfaces_exchange_error_detail(monkeypatch) -> None:
+    monkeypatch.setattr("app.routes.auth.get_settings", oauth_settings)
+    monkeypatch.setattr(
+        "app.routes.auth.httpx.post",
+        lambda *_, **__: FakeResponse(
+            200,
+            {
+                "error": "bad_verification_code",
+                "error_description": "The code passed is incorrect or expired.",
+            },
+        ),
+    )
+
+    client = TestClient(app)
+
+    response = client.get("/auth/github/callback?code=oauth-code")
+
+    assert response.status_code == 502
+    assert response.json() == {
+        "detail": (
+            "GitHub token exchange failed: "
+            "The code passed is incorrect or expired."
+        )
+    }
+
+
+def test_github_oauth_callback_redirects_error_back_to_frontend(monkeypatch) -> None:
+    monkeypatch.setattr("app.routes.auth.get_settings", oauth_settings)
+    monkeypatch.setattr(
+        "app.routes.auth.httpx.post",
+        lambda *_, **__: FakeResponse(
+            200,
+            {
+                "error": "bad_verification_code",
+                "error_description": "The code passed is incorrect or expired.",
+            },
+        ),
+    )
+
+    client = TestClient(app)
+    start_response = client.get(
+        "/auth/github/start",
+        params={"redirect_to": "http://127.0.0.1:5175/"},
+        follow_redirects=False,
+    )
+    state = start_response.headers["location"].split("state=")[1].split("&")[0]
+
+    response = client.get(
+        "/auth/github/callback",
+        params={"code": "oauth-code", "state": state},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == (
+        "http://127.0.0.1:5175/?auth_error=github_login_failed"
+    )
 
 
 def test_github_oauth_callback_creates_user_and_returns_token(monkeypatch) -> None:
@@ -178,7 +240,38 @@ def test_github_oauth_callback_redirects_back_to_frontend(monkeypatch) -> None:
         follow_redirects=False,
     )
 
-    assert response.status_code == 307
+    assert response.status_code == 302
     assert response.headers["location"].startswith(
         "http://localhost:5175/?auth_access_token="
+    )
+
+
+def test_github_oauth_callback_redirects_provider_error_back_to_frontend(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("app.routes.auth.get_settings", oauth_settings)
+
+    client = TestClient(app)
+    start_response = client.get(
+        "/auth/github/start",
+        params={"redirect_to": "http://127.0.0.1:5175/"},
+        follow_redirects=False,
+    )
+    state = start_response.headers["location"].split("state=")[1].split("&")[0]
+
+    response = client.get(
+        "/auth/github/callback",
+        params={
+            "state": state,
+            "error": "access_denied",
+            "error_description": "The user denied access.",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == (
+        "http://127.0.0.1:5175/?auth_error=github_login_failed"
+        "&auth_provider_error=access_denied"
+        "&auth_error_description=The+user+denied+access."
     )

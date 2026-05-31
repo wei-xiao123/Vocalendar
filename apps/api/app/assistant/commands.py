@@ -1,5 +1,5 @@
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from pydantic import BaseModel, Field
 
@@ -23,6 +23,16 @@ RELATIVE_DATE_OFFSETS = {
     "今天": 0,
     "明天": 1,
     "后天": 2,
+}
+WEEKDAY_NAME_TO_INDEX = {
+    "一": 0,
+    "二": 1,
+    "三": 2,
+    "四": 3,
+    "五": 4,
+    "六": 5,
+    "日": 6,
+    "天": 6,
 }
 CHINESE_DIGITS = {
     "零": 0,
@@ -55,6 +65,23 @@ RELATIVE_DATETIME_PATTERN = re.compile(
     r"(?P<hour>\d{1,2}|[零〇一二两三四五六七八九十]{1,3})"
     r"(?:(?:点|时)(?P<minute>半|\d{1,2}分?|"
     r"[零〇一二两三四五六七八九十]{1,3}分?)?|[:：](?P<colon_minute>\d{1,2})))?"
+)
+WEEKDAY_TOKEN_PATTERN = (
+    r"(?:(?P<relative_prefix>这周|本周|下周)(?P<relative_weekday>[一二三四五六日天])"
+    r"|(?P<weekday>周[一二三四五六日天]|星期[一二三四五六日天]|礼拜[一二三四五六日天]))"
+)
+WEEKDAY_REFERENCE_PATTERN = re.compile(
+    WEEKDAY_TOKEN_PATTERN
+)
+WEEKDAY_DATETIME_PATTERN = re.compile(
+    WEEKDAY_TOKEN_PATTERN
+    + (
+        r"(?:的)?"
+        r"(?:(?P<period>凌晨|早上|上午|中午|下午|晚上|今晚)?"
+        r"(?P<hour>\d{1,2}|[零〇一二两三四五六七八九十]{1,3})"
+        r"(?:(?:点|时)(?P<minute>半|\d{1,2}分?|"
+        r"[零〇一二两三四五六七八九十]{1,3}分?)?|[:：](?P<colon_minute>\d{1,2})))?"
+    )
 )
 TODAY_TIME_PATTERN = re.compile(
     r"(?:大概)?(?:在)?"
@@ -104,13 +131,13 @@ def parse_assistant_command(
     if add_payload is not None:
         return _parse_add_command(normalized_text, add_payload, reference_time)
 
-    list_command = _parse_list_command(normalized_text)
+    list_command = _parse_list_command(normalized_text, reference_time)
     if list_command is not None:
         return list_command
 
     delete_payload = _strip_delete_command_prefix(normalized_text)
     if delete_payload is not None:
-        return _parse_delete_command(normalized_text, delete_payload)
+        return _parse_delete_command(normalized_text, delete_payload, reference_time)
 
     return AssistantCommandResponse(
         action="unknown",
@@ -170,15 +197,25 @@ def _parse_add_command(
                     + remaining_title[relative_datetime_match.end() :]
                 ).strip(" ，,：:")
         else:
-            today_time_match = TODAY_TIME_PATTERN.search(remaining_title)
-            if today_time_match is not None:
-                starts_at = _normalize_today_time(today_time_match, now)
+            weekday_datetime_match = WEEKDAY_DATETIME_PATTERN.search(remaining_title)
+            if weekday_datetime_match is not None:
+                starts_at = _normalize_weekday_datetime(weekday_datetime_match, now)
                 if starts_at is not None:
                     parameters["starts_at"] = starts_at
                     remaining_title = (
-                        remaining_title[: today_time_match.start()]
-                        + remaining_title[today_time_match.end() :]
+                        remaining_title[: weekday_datetime_match.start()]
+                        + remaining_title[weekday_datetime_match.end() :]
                     ).strip(" ，,：:")
+            else:
+                today_time_match = TODAY_TIME_PATTERN.search(remaining_title)
+                if today_time_match is not None:
+                    starts_at = _normalize_today_time(today_time_match, now)
+                    if starts_at is not None:
+                        parameters["starts_at"] = starts_at
+                        remaining_title = (
+                            remaining_title[: today_time_match.start()]
+                            + remaining_title[today_time_match.end() :]
+                        ).strip(" ，,：:")
 
     starts_at = _parse_datetime_parameter(parameters.get("starts_at"))
     if starts_at is not None and reminder_offset is not None:
@@ -198,13 +235,16 @@ def _parse_add_command(
     )
 
 
-def _parse_list_command(text: str) -> AssistantCommandResponse | None:
+def _parse_list_command(
+    text: str,
+    now: datetime,
+) -> AssistantCommandResponse | None:
     has_list_intent = any(keyword in text for keyword in LIST_COMMAND_KEYWORDS)
     has_list_object = any(keyword in text for keyword in LIST_COMMAND_OBJECTS)
     if not has_list_intent or not has_list_object:
         return None
 
-    parameters = _extract_range_parameters(text)
+    parameters = _extract_range_parameters(text, now)
 
     return AssistantCommandResponse(
         action="list_events",
@@ -224,8 +264,12 @@ def _strip_delete_command_prefix(text: str) -> str | None:
     return None
 
 
-def _parse_delete_command(original_text: str, payload: str) -> AssistantCommandResponse:
-    parameters = _extract_range_parameters(payload)
+def _parse_delete_command(
+    original_text: str,
+    payload: str,
+    now: datetime,
+) -> AssistantCommandResponse:
+    parameters = _extract_range_parameters(payload, now)
     title = _clean_delete_title(payload)
     if title:
         parameters["title"] = title
@@ -308,6 +352,38 @@ def _normalize_today_time(
     return parsed.isoformat()
 
 
+def _normalize_weekday_datetime(
+    match: re.Match[str],
+    now: datetime,
+) -> str | None:
+    prefix, weekday_text = _extract_weekday_parts(match)
+    if weekday_text is None:
+        return None
+
+    hour = _parse_zh_number(match.group("hour"))
+    if hour is None:
+        return None
+
+    minute = _parse_minute(match.group("minute"), match.group("colon_minute"))
+    if minute is None:
+        return None
+
+    hour = _apply_period(hour, match.group("period"))
+    if hour > 23 or minute > 59:
+        return None
+
+    target_date = _resolve_weekday_date(
+        prefix=prefix,
+        weekday_text=weekday_text,
+        now=now,
+        event_time=(hour, minute),
+    )
+    return datetime.combine(target_date, datetime.min.time()).replace(
+        hour=hour,
+        minute=minute,
+    ).isoformat()
+
+
 def _parse_minute(minute_text: str | None, colon_minute_text: str | None) -> int | None:
     if colon_minute_text is not None:
         return int(colon_minute_text)
@@ -372,12 +448,25 @@ def _parse_zh_number(value: str) -> int | None:
     return tens * 10 + ones
 
 
-def _extract_range_parameters(text: str) -> dict[str, str]:
+def _extract_range_parameters(text: str, now: datetime) -> dict[str, str]:
     parameters: dict[str, str] = {}
     for keyword, value in LIST_RANGE_KEYWORDS.items():
         if keyword in text:
             parameters["range"] = value
             break
+    if "range" in parameters:
+        return parameters
+
+    weekday_match = WEEKDAY_REFERENCE_PATTERN.search(text)
+    if weekday_match is not None:
+        prefix, weekday_text = _extract_weekday_parts(weekday_match)
+        if weekday_text is None:
+            return parameters
+        parameters["target_date"] = _resolve_weekday_date(
+            prefix=prefix,
+            weekday_text=weekday_text,
+            now=now,
+        ).isoformat()
     return parameters
 
 
@@ -422,7 +511,56 @@ def _remove_relative_date_words(value: str) -> str:
     title = value
     for keyword in RELATIVE_DATE_OFFSETS:
         title = title.replace(keyword, " ")
+    title = WEEKDAY_REFERENCE_PATTERN.sub(" ", title)
     return title
+
+
+def _extract_weekday_parts(
+    match: re.Match[str],
+) -> tuple[str | None, str | None]:
+    prefix = match.group("relative_prefix")
+    weekday_text = match.group("weekday")
+    if weekday_text is not None:
+        return None, weekday_text
+
+    relative_weekday = match.group("relative_weekday")
+    if relative_weekday is None:
+        return prefix, None
+    return prefix, f"周{relative_weekday}"
+
+
+def _resolve_weekday_date(
+    *,
+    prefix: str | None,
+    weekday_text: str,
+    now: datetime,
+    event_time: tuple[int, int] | None = None,
+) -> date:
+    target_weekday = _parse_weekday_text(weekday_text)
+    if target_weekday is None:
+        return now.date()
+
+    current_weekday = now.weekday()
+    start_of_this_week = now.date() - timedelta(days=current_weekday)
+    if prefix == "下周":
+        return start_of_this_week + timedelta(days=7 + target_weekday)
+    if prefix in {"这周", "本周"}:
+        return start_of_this_week + timedelta(days=target_weekday)
+
+    days_ahead = (target_weekday - current_weekday) % 7
+    if event_time is not None and days_ahead == 0:
+        hour, minute = event_time
+        candidate = datetime.combine(now.date(), datetime.min.time()).replace(
+            hour=hour,
+            minute=minute,
+        )
+        if candidate <= now:
+            days_ahead = 7
+    return now.date() + timedelta(days=days_ahead)
+
+
+def _parse_weekday_text(value: str) -> int | None:
+    return WEEKDAY_NAME_TO_INDEX.get(value[-1])
 
 
 def _normalize_title_text(value: str) -> str:

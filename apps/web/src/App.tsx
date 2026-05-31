@@ -1,7 +1,9 @@
-import { type FormEvent, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
-import './App.css'
+import { Login } from './components/Login'
+import { MainHub } from './components/MainHub'
 import {
+  type AssistantCommandResponse,
   type AuthToken,
   type CalendarEvent,
   createEvent,
@@ -15,12 +17,14 @@ import {
   type GoogleConnectionStatus,
   listEvents,
   sendAssistantCommand,
-  type AssistantCommandResponse,
 } from './lib/api'
 import { useSpeechRecognition } from './hooks/useSpeechRecognition'
+import { type UiCalendarEvent } from './types'
 
 const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 const AUTH_STORAGE_KEY = 'vocalendar.auth'
+const MAX_REMINDER_DELAY_MS = 2_147_483_647
+const REMINDER_SOUND_UNLOCK_ERROR = '提醒音启用失败，请与页面交互后重试。'
 
 type EventListState = {
   events: CalendarEvent[]
@@ -35,9 +39,26 @@ type GoogleConnectionState = {
   lastSyncedAt: string | null
 }
 
+type OAuthCallbackState = {
+  eventListRefreshKey: number
+  errorMessage: string | null
+  shouldSuppressGooglePrompt: boolean
+}
+
+type ReminderSoundState = {
+  enabled: boolean
+  error: string | null
+  isSupported: boolean
+  isUnlocking: boolean
+}
+
+type AudioContextConstructor = {
+  new (): AudioContext
+}
+
 const initialEventListState: EventListState = {
-  events: [],
   error: null,
+  events: [],
 }
 
 const initialGoogleConnectionState: GoogleConnectionState = {
@@ -48,17 +69,11 @@ const initialGoogleConnectionState: GoogleConnectionState = {
   lastSyncedAt: null,
 }
 
-const MAX_REMINDER_DELAY_MS = 2_147_483_647
-
-function getInitialNotificationPermission(): NotificationPermission {
-  if (!('Notification' in window)) {
-    return 'denied'
-  }
-  return window.Notification.permission
-}
-
 function App() {
   const oauthCallbackState = getOAuthCallbackState()
+  const initialEventListRefreshKeyRef = useRef(
+    oauthCallbackState.eventListRefreshKey,
+  )
   const [authToken, setAuthToken] = useState<AuthToken | null>(() => {
     const storedValue = window.localStorage.getItem(AUTH_STORAGE_KEY)
     if (!storedValue) {
@@ -73,16 +88,40 @@ function App() {
     }
   })
   const [isCreatingGuest, setIsCreatingGuest] = useState(false)
+  const [isStartingGitHubLogin, setIsStartingGitHubLogin] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(
     oauthCallbackState.errorMessage,
   )
   const [eventListRefreshKey, setEventListRefreshKey] = useState(
-    oauthCallbackState.shouldRefreshEvents ? 1 : 0,
+    oauthCallbackState.eventListRefreshKey,
   )
+  const [eventListState, setEventListState] = useState<EventListState>(
+    initialEventListState,
+  )
+  const [eventListLoadingKey, setEventListLoadingKey] = useState<number | null>(
+    authToken ? oauthCallbackState.eventListRefreshKey : null,
+  )
+  const [isCreatingEvent, setIsCreatingEvent] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
+  const [deletingEventId, setDeletingEventId] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [googleConnectionState, setGoogleConnectionState] =
     useState<GoogleConnectionState>(initialGoogleConnectionState)
   const [notificationPermission, setNotificationPermission] =
     useState<NotificationPermission>(() => getInitialNotificationPermission())
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const [reminderSoundState, setReminderSoundState] =
+    useState<ReminderSoundState>(() => ({
+      enabled: false,
+      error: null,
+      isSupported: getAudioContextConstructor() !== null,
+      isUnlocking: false,
+    }))
+  const [isSendingCommand, setIsSendingCommand] = useState(false)
+  const [assistantResponse, setAssistantResponse] =
+    useState<AssistantCommandResponse | null>(null)
+  const [assistantError, setAssistantError] = useState<string | null>(null)
+  const voiceRecognition = useSpeechRecognition()
 
   useEffect(() => {
     if (authToken) {
@@ -96,15 +135,17 @@ function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const authAccessToken = params.get('auth_access_token')
+    const hasAuthError = params.has('auth_error')
     const hasGoogleCallback =
       params.has('google_connected') || params.has('google_error')
 
-    if (!authAccessToken && !hasGoogleCallback) {
+    if (!authAccessToken && !hasGoogleCallback && !hasAuthError) {
       return
     }
 
     const nextUrl = new URL(window.location.href)
     nextUrl.searchParams.delete('auth_access_token')
+    nextUrl.searchParams.delete('auth_error')
     nextUrl.searchParams.delete('google_connected')
     nextUrl.searchParams.delete('google_error')
     window.history.replaceState({}, '', nextUrl.toString())
@@ -113,8 +154,10 @@ function App() {
       return
     }
 
+    const requestKey = initialEventListRefreshKeyRef.current
     void getCurrentUser(authAccessToken)
       .then((user) => {
+        setEventListLoadingKey(requestKey)
         setAuthToken({
           access_token: authAccessToken,
           token_type: 'bearer',
@@ -128,12 +171,52 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (!authToken || authToken.user.is_guest) {
+    if (!authToken) {
       return
     }
 
     const accessToken = authToken.access_token
     let isCurrent = true
+    const requestKey = eventListRefreshKey
+
+    listEvents(accessToken)
+      .then((nextEvents) => {
+        if (isCurrent) {
+          setEventListState({
+            error: null,
+            events: nextEvents,
+          })
+        }
+      })
+      .catch(() => {
+        if (isCurrent) {
+          setEventListState({
+            error: '日程列表加载失败，请稍后重试。',
+            events: [],
+          })
+        }
+      })
+      .finally(() => {
+        if (isCurrent) {
+          setEventListLoadingKey((current) =>
+            current === requestKey ? null : current,
+          )
+        }
+      })
+
+    return () => {
+      isCurrent = false
+    }
+  }, [authToken, eventListRefreshKey])
+
+  useEffect(() => {
+    if (!authToken) {
+      return
+    }
+
+    const accessToken = authToken.access_token
+    let isCurrent = true
+
     async function loadGoogleConnectionStatus() {
       setGoogleConnectionState((current) => ({
         ...current,
@@ -165,12 +248,31 @@ function App() {
     }
   }, [authToken, eventListRefreshKey])
 
+  useEffect(() => {
+    return () => {
+      const audioContext = audioContextRef.current
+      if (!audioContext) {
+        return
+      }
+      void audioContext.close()
+      audioContextRef.current = null
+    }
+  }, [])
+
+  useReminderNotificationScheduler(
+    eventListState.events,
+    notificationPermission,
+    playReminderSound,
+  )
+
   async function handleGuestSession() {
     setIsCreatingGuest(true)
     setErrorMessage(null)
 
     try {
-      setAuthToken(await createGuestSession())
+      const nextAuthToken = await createGuestSession()
+      setEventListLoadingKey(eventListRefreshKey)
+      setAuthToken(nextAuthToken)
     } catch {
       setErrorMessage('游客模式暂时不可用，请稍后重试。')
     } finally {
@@ -179,20 +281,114 @@ function App() {
   }
 
   function handleGitHubLogin() {
+    setIsStartingGitHubLogin(true)
+    setErrorMessage(null)
     window.location.assign(getGitHubOAuthStartUrl(apiUrl, getCurrentPageUrl()))
   }
 
   function handleSignOut() {
     setAuthToken(null)
     setErrorMessage(null)
+    setAssistantResponse(null)
+    setAssistantError(null)
+    setEventListState(initialEventListState)
+    setGoogleConnectionState(initialGoogleConnectionState)
+    setEventListLoadingKey(null)
   }
 
   function refreshEventList() {
-    setEventListRefreshKey((current) => current + 1)
+    setEventListRefreshKey((current) => {
+      const nextKey = current + 1
+      setEventListLoadingKey(nextKey)
+      return nextKey
+    })
+  }
+
+  async function handleCreateEvent(payload: {
+    reminderAt: string
+    startsAt: string
+    title: string
+  }) {
+    if (!authToken || !payload.title.trim() || !payload.startsAt) {
+      return
+    }
+
+    setIsCreatingEvent(true)
+    setCreateError(null)
+
+    try {
+      const createdEvent = await createEvent(
+        {
+          reminder_at: payload.reminderAt || null,
+          starts_at: payload.startsAt,
+          title: payload.title.trim(),
+        },
+        authToken.access_token,
+      )
+      setEventListState((current) => ({
+        ...current,
+        events: [...current.events, createdEvent].sort(compareEventsByStart),
+      }))
+    } catch {
+      setCreateError('日程创建失败，请检查内容后重试。')
+    } finally {
+      setIsCreatingEvent(false)
+    }
+  }
+
+  async function handleDeleteEvent(eventId: string) {
+    if (!authToken) {
+      return
+    }
+
+    const numericEventId = Number(eventId)
+    setDeleteError(null)
+    setDeletingEventId(eventId)
+
+    try {
+      await deleteEvent(numericEventId, authToken.access_token)
+      setEventListState((current) => ({
+        ...current,
+        events: current.events.filter((event) => event.id !== numericEventId),
+      }))
+    } catch {
+      setDeleteError('日程删除失败，请稍后重试。')
+    } finally {
+      setDeletingEventId(null)
+    }
+  }
+
+  async function handleAssistantCommand(commandText: string) {
+    if (!authToken) {
+      return
+    }
+
+    const normalizedCommandText = commandText.trim()
+    if (!normalizedCommandText) {
+      return
+    }
+
+    setIsSendingCommand(true)
+    setAssistantError(null)
+
+    try {
+      const response = await sendAssistantCommand(
+        normalizedCommandText,
+        authToken.access_token,
+      )
+      setAssistantResponse(response)
+      if (shouldRefreshEventsAfterAssistantResponse(response)) {
+        refreshEventList()
+      }
+    } catch {
+      setAssistantError('助手命令执行失败，请稍后重试。')
+    } finally {
+      setIsSendingCommand(false)
+    }
   }
 
   async function handleGoogleCalendarConnect() {
-    if (!authToken || authToken.user.is_guest) {
+    if (!authToken) {
       return
     }
 
@@ -230,13 +426,7 @@ function App() {
 
     try {
       await disconnectGoogleCalendar(authToken.access_token)
-      setGoogleConnectionState({
-        calendarId: null,
-        connected: false,
-        error: null,
-        isLoading: false,
-        lastSyncedAt: null,
-      })
+      setGoogleConnectionState(initialGoogleConnectionState)
     } catch {
       setGoogleConnectionState((current) => ({
         ...current,
@@ -246,264 +436,134 @@ function App() {
     }
   }
 
-  const displayName =
-    authToken?.user.display_name ?? authToken?.user.username ?? 'Guest User'
-  const effectiveGoogleConnectionState =
-    authToken?.user.is_guest ? initialGoogleConnectionState : googleConnectionState
-
-  return (
-    <main className="app-shell">
-      <section className="workspace-panel" aria-labelledby="app-title">
-        <div className="app-header">
-          <div>
-            <p className="eyebrow">Vocalendar</p>
-            <h1 id="app-title">日程工作台</h1>
-          </div>
-          <div className="api-pill" title={apiUrl}>
-            API
-          </div>
-        </div>
-
-        {authToken ? (
-          <>
-            <section className="session-panel" aria-label="当前会话">
-              <div>
-                <p className="section-label">当前身份</p>
-                <p className="session-name">{displayName}</p>
-                <p className="session-meta">
-                  {authToken.user.is_guest ? '游客会话' : 'GitHub 账号'}
-                </p>
-              </div>
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={handleSignOut}
-              >
-                退出
-              </button>
-            </section>
-
-            <EventList
-              accessToken={authToken.access_token}
-              key={authToken.access_token}
-              notificationPermission={notificationPermission}
-              refreshKey={eventListRefreshKey}
-            />
-            <GoogleCalendarPanel
-              isGuest={authToken.user.is_guest}
-              onConnect={handleGoogleCalendarConnect}
-              onDisconnect={handleGoogleCalendarDisconnect}
-              state={effectiveGoogleConnectionState}
-            />
-            <AssistantCommandWorkspace
-              accessToken={authToken.access_token}
-              onEventsChanged={refreshEventList}
-            />
-            <NotificationPermissionPanel
-              permission={notificationPermission}
-              setPermission={setNotificationPermission}
-            />
-          </>
-        ) : (
-          <section className="auth-panel" aria-label="登录入口">
-            <div>
-              <p className="section-label">开始使用</p>
-              <p className="auth-copy">
-                选择 GitHub 登录或游客模式，进入后即可使用你的日程数据。
-              </p>
-            </div>
-            <div className="auth-actions">
-              <button
-                className="primary-button"
-                type="button"
-                onClick={handleGitHubLogin}
-              >
-                GitHub 登录
-              </button>
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={handleGuestSession}
-                disabled={isCreatingGuest}
-              >
-                {isCreatingGuest ? '正在进入...' : '游客模式'}
-              </button>
-            </div>
-            {errorMessage ? (
-              <p className="error-message" role="alert">
-                {errorMessage}
-              </p>
-            ) : null}
-          </section>
-        )}
-      </section>
-    </main>
-  )
-}
-
-function GoogleCalendarPanel({
-  isGuest,
-  onConnect,
-  onDisconnect,
-  state,
-}: {
-  isGuest: boolean
-  onConnect: () => void
-  onDisconnect: () => void
-  state: GoogleConnectionState
-}) {
-  return (
-    <section className="session-panel" aria-labelledby="google-calendar-title">
-      <div>
-        <p className="section-label">日历集成</p>
-        <h2 id="google-calendar-title">Google Calendar</h2>
-        <p className="session-meta">
-          {isGuest
-            ? '游客模式暂不支持连接外部日历'
-            : getGoogleConnectionText(state)}
-        </p>
-        {state.lastSyncedAt ? (
-          <p className="session-meta">最近同步：{formatDateTime(state.lastSyncedAt)}</p>
-        ) : null}
-        {state.error ? (
-          <p className="error-message" role="alert">
-            {state.error}
-          </p>
-        ) : null}
-      </div>
-      {isGuest ? null : state.connected ? (
-        <button
-          className="secondary-button"
-          disabled={state.isLoading}
-          onClick={onDisconnect}
-          type="button"
-        >
-          {state.isLoading ? '处理中...' : '断开连接'}
-        </button>
-      ) : (
-        <button
-          className="primary-button"
-          disabled={state.isLoading}
-          onClick={onConnect}
-          type="button"
-        >
-          {state.isLoading ? '跳转中...' : '连接 Google 日历'}
-        </button>
-      )}
-    </section>
-  )
-}
-
-function NotificationPermissionPanel({
-  permission,
-  setPermission,
-}: {
-  permission: NotificationPermission
-  setPermission: (permission: NotificationPermission) => void
-}) {
-  const [isRequestingPermission, setIsRequestingPermission] = useState(false)
-  const isSupported = 'Notification' in window
-  const canRequestPermission = isSupported && permission === 'default'
-
-  async function handleRequestPermission() {
-    if (!canRequestPermission) {
+  async function handleRequestNotificationPermission() {
+    if (!('Notification' in window) || notificationPermission !== 'default') {
       return
     }
 
-    setIsRequestingPermission(true)
-    try {
-      setPermission(await window.Notification.requestPermission())
-    } finally {
-      setIsRequestingPermission(false)
-    }
+    setNotificationPermission(await window.Notification.requestPermission())
   }
 
-  return (
-    <section className="notification-panel" aria-labelledby="notification-title">
-      <div className="section-header">
-        <div>
-          <p className="section-label">浏览器通知</p>
-          <h2 id="notification-title">提醒权限</h2>
-        </div>
-        <span className="notification-status">
-          {getNotificationStatusText(isSupported, permission)}
-        </span>
-      </div>
-      <button
-        className="secondary-button"
-        disabled={!canRequestPermission || isRequestingPermission}
-        onClick={() => void handleRequestPermission()}
-        type="button"
-      >
-        {isRequestingPermission ? '请求中...' : '请求通知权限'}
-      </button>
-    </section>
-  )
-}
-
-function AssistantCommandWorkspace({
-  accessToken,
-  onEventsChanged,
-}: {
-  accessToken: string
-  onEventsChanged: () => void
-}) {
-  const [commandText, setCommandText] = useState('')
-  const [isSendingCommand, setIsSendingCommand] = useState(false)
-  const [assistantResponse, setAssistantResponse] =
-    useState<AssistantCommandResponse | null>(null)
-  const [assistantError, setAssistantError] = useState<string | null>(null)
-  const canSendCommand = commandText.trim().length > 0
-
-  async function sendCommand(nextCommandText: string) {
-    const normalizedCommandText = nextCommandText.trim()
-    if (!normalizedCommandText) {
+  async function playReminderSound() {
+    const audioContext = audioContextRef.current
+    if (!audioContext) {
       return
     }
 
-    setIsSendingCommand(true)
-    setAssistantError(null)
-
     try {
-      const response = await sendAssistantCommand(normalizedCommandText, accessToken)
-      setAssistantResponse(response)
-      if (shouldRefreshEventsAfterAssistantResponse(response)) {
-        onEventsChanged()
+      if (audioContext.state !== 'running') {
+        await audioContext.resume()
       }
-      setCommandText('')
+      scheduleReminderSound(audioContext)
+      setReminderSoundState((current) => ({
+        ...current,
+        error: null,
+      }))
     } catch {
-      setAssistantError('助手命令执行失败，请稍后重试。')
-    } finally {
-      setIsSendingCommand(false)
+      setReminderSoundState((current) => ({
+        ...current,
+        enabled: false,
+        error: REMINDER_SOUND_UNLOCK_ERROR,
+      }))
     }
   }
 
-  function handleAssistantSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    void sendCommand(commandText)
+  async function handleEnableReminderSound() {
+    const AudioContextCtor = getAudioContextConstructor()
+    if (!AudioContextCtor) {
+      setReminderSoundState({
+        enabled: false,
+        error: '当前浏览器不支持提醒音。',
+        isSupported: false,
+        isUnlocking: false,
+      })
+      return
+    }
+
+    setReminderSoundState((current) => ({
+      ...current,
+      error: null,
+      isUnlocking: true,
+    }))
+
+    try {
+      const audioContext = audioContextRef.current ?? new AudioContextCtor()
+      audioContextRef.current = audioContext
+      if (audioContext.state !== 'running') {
+        await audioContext.resume()
+      }
+      setReminderSoundState({
+        enabled: true,
+        error: null,
+        isSupported: true,
+        isUnlocking: false,
+      })
+    } catch {
+      setReminderSoundState({
+        enabled: false,
+        error: REMINDER_SOUND_UNLOCK_ERROR,
+        isSupported: true,
+        isUnlocking: false,
+      })
+    }
   }
 
-  function handleVoiceCommand(nextCommandText: string) {
-    setCommandText(nextCommandText.trim())
-    void sendCommand(nextCommandText)
+  const uiEvents = eventListState.events.map(toUiCalendarEvent)
+  const isLoadingEvents = eventListLoadingKey !== null
+
+  if (!authToken) {
+    return (
+      <Login
+        errorMessage={errorMessage}
+        isCreatingGuest={isCreatingGuest}
+        isStartingGitHubLogin={isStartingGitHubLogin}
+        onGitHubLogin={handleGitHubLogin}
+        onGuestSession={() => void handleGuestSession()}
+      />
+    )
   }
 
   return (
-    <>
-      <VoiceInputControl
-        isSendingCommand={isSendingCommand}
-        onCommand={handleVoiceCommand}
-      />
-      <AssistantPanel
-        assistantError={assistantError}
-        assistantResponse={assistantResponse}
-        canSendCommand={canSendCommand}
-        commandText={commandText}
-        isSendingCommand={isSendingCommand}
-        onCommandTextChange={setCommandText}
-        onSubmit={handleAssistantSubmit}
-      />
-    </>
+    <MainHub
+      assistantError={assistantError}
+      assistantResponse={assistantResponse}
+      canCreateEvent={Boolean(authToken)}
+      createError={createError}
+      deletingEventId={deletingEventId}
+      deleteError={deleteError}
+      events={uiEvents}
+      googleConnectionState={googleConnectionState}
+      shouldPromptGoogleCalendar={
+        !oauthCallbackState.shouldSuppressGooglePrompt
+      }
+      isCreatingEvent={isCreatingEvent}
+      isGuest={authToken.user.is_guest}
+      isLoadingEvents={isLoadingEvents}
+      isSendingCommand={isSendingCommand}
+      listError={eventListState.error}
+      notificationPermission={notificationPermission}
+      onCreateEvent={(payload) => void handleCreateEvent(payload)}
+      onDeleteEvent={(eventId) => void handleDeleteEvent(eventId)}
+      onDisconnectGoogleCalendar={() => void handleGoogleCalendarDisconnect()}
+      onEnableReminderSound={() => void handleEnableReminderSound()}
+      onGoogleCalendarConnect={() => void handleGoogleCalendarConnect()}
+      onRequestNotificationPermission={() => void handleRequestNotificationPermission()}
+      onSendAssistantCommand={(commandText) => void handleAssistantCommand(commandText)}
+      onSignOut={handleSignOut}
+      onStartListening={voiceRecognition.start}
+      onStopListening={voiceRecognition.stop}
+      onTestReminderSound={() => void playReminderSound()}
+      reminderSoundState={reminderSoundState}
+      user={authToken.user}
+      voiceState={{
+        errorMessage: voiceRecognition.errorMessage,
+        interimTranscript: voiceRecognition.interimTranscript,
+        isListening: voiceRecognition.isListening,
+        isSupported: voiceRecognition.isSupported,
+        status: voiceRecognition.status,
+        transcript: voiceRecognition.transcript,
+      }}
+    />
   )
 }
 
@@ -514,433 +574,6 @@ function shouldRefreshEventsAfterAssistantResponse(
     response.event !== undefined &&
     (response.action === 'add_event' || response.action === 'delete_event')
   )
-}
-
-function AssistantPanel({
-  assistantError,
-  assistantResponse,
-  canSendCommand,
-  commandText,
-  isSendingCommand,
-  onCommandTextChange,
-  onSubmit,
-}: {
-  assistantError: string | null
-  assistantResponse: AssistantCommandResponse | null
-  canSendCommand: boolean
-  commandText: string
-  isSendingCommand: boolean
-  onCommandTextChange: (commandText: string) => void
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void
-}) {
-  return (
-    <section className="assistant-panel" aria-labelledby="assistant-title">
-      <div className="section-header">
-        <div>
-          <p className="section-label">助手</p>
-          <h2 id="assistant-title">命令结果</h2>
-        </div>
-        {assistantResponse ? (
-          <span className="assistant-action">{assistantResponse.action}</span>
-        ) : null}
-      </div>
-      <form className="assistant-form" onSubmit={onSubmit}>
-        <label>
-          <span>文本命令</span>
-          <input
-            name="assistant-command"
-            onChange={(event) => onCommandTextChange(event.target.value)}
-            placeholder="例如：查看今天提醒"
-            type="text"
-            value={commandText}
-          />
-        </label>
-        <button
-          className="primary-button"
-          disabled={!canSendCommand || isSendingCommand}
-          type="submit"
-        >
-          {isSendingCommand ? '执行中...' : '执行'}
-        </button>
-      </form>
-      {assistantError ? (
-        <p className="error-message form-error" role="alert">
-          {assistantError}
-        </p>
-      ) : null}
-      {assistantResponse ? (
-        <div className="assistant-result" aria-live="polite">
-          <p>{assistantResponse.message ?? getAssistantFallbackMessage(assistantResponse)}</p>
-          {assistantResponse.event ? (
-            <AssistantEventSummary event={assistantResponse.event} />
-          ) : null}
-          {assistantResponse.events && assistantResponse.events.length > 0 ? (
-            <ul className="assistant-event-list" aria-label="助手返回日程">
-              {assistantResponse.events.map((event) => (
-                <li key={event.id}>
-                  <AssistantEventSummary event={event} />
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-      ) : (
-        <p className="state-message">还没有助手回复。</p>
-      )}
-    </section>
-  )
-}
-
-function AssistantEventSummary({
-  event,
-}: {
-  event: NonNullable<AssistantCommandResponse['event']>
-}) {
-  return (
-    <div className="assistant-event">
-      <p className="event-title">{event.title}</p>
-      <p className="event-time">{formatEventTime(event.starts_at, event.ends_at ?? null)}</p>
-      {event.reminder_at ? (
-        <p className="event-reminder">{formatReminderTime(event.reminder_at)}</p>
-      ) : null}
-    </div>
-  )
-}
-
-function getAssistantFallbackMessage(response: AssistantCommandResponse): string {
-  if (response.action === 'unknown') {
-    return '暂未识别该命令。'
-  }
-  return '命令已解析。'
-}
-
-function getNotificationStatusText(
-  isSupported: boolean,
-  permission: NotificationPermission,
-): string {
-  if (!isSupported) {
-    return '不支持'
-  }
-  if (permission === 'granted') {
-    return '已允许'
-  }
-  if (permission === 'denied') {
-    return '已拒绝'
-  }
-  return '未决定'
-}
-
-function VoiceInputControl({
-  isSendingCommand,
-  onCommand,
-}: {
-  isSendingCommand: boolean
-  onCommand: (commandText: string) => void
-}) {
-  const {
-    errorMessage,
-    interimTranscript,
-    isListening,
-    isSupported,
-    start,
-    status,
-    stop,
-    transcript,
-  } = useSpeechRecognition()
-  const hasTranscript = transcript.length > 0 || interimTranscript.length > 0
-  const commandText = transcript.trim()
-  const canSendVoiceCommand = commandText.length > 0 && !isSendingCommand
-
-  function handleToggleListening() {
-    if (isListening) {
-      stop()
-      return
-    }
-
-    start()
-  }
-
-  function handleSendVoiceCommand() {
-    if (!canSendVoiceCommand) {
-      return
-    }
-
-    onCommand(commandText)
-  }
-
-  return (
-    <section className="voice-panel" aria-labelledby="voice-title">
-      <div className="section-header">
-        <div>
-          <p className="section-label">语音输入</p>
-          <h2 id="voice-title">麦克风</h2>
-        </div>
-        <span className="voice-status">{getVoiceStatusText(status)}</span>
-      </div>
-      <div className="voice-actions">
-        <button
-          className="voice-button"
-          disabled={!isSupported}
-          onClick={handleToggleListening}
-          type="button"
-        >
-          {isListening ? '停止识别' : '开始识别'}
-        </button>
-        <button
-          className="secondary-button"
-          disabled={!canSendVoiceCommand}
-          onClick={handleSendVoiceCommand}
-          type="button"
-        >
-          {isSendingCommand ? '执行中...' : '执行语音命令'}
-        </button>
-      </div>
-      {errorMessage ? (
-        <p className="error-message voice-message" role="alert">
-          {errorMessage}
-        </p>
-      ) : null}
-      <p className="voice-transcript" aria-live="polite">
-        {hasTranscript ? (
-          <>
-            {transcript}
-            {interimTranscript ? (
-              <span className="interim-transcript">{interimTranscript}</span>
-            ) : null}
-          </>
-        ) : (
-          '等待语音输入。'
-        )}
-      </p>
-    </section>
-  )
-}
-
-function EventList({
-  accessToken,
-  notificationPermission,
-  refreshKey,
-}: {
-  accessToken: string
-  notificationPermission: NotificationPermission
-  refreshKey: number
-}) {
-  const [eventListState, setEventListState] = useState<EventListState>(
-    initialEventListState,
-  )
-  const [isLoadingEvents, setIsLoadingEvents] = useState(true)
-  const [title, setTitle] = useState('')
-  const [startsAt, setStartsAt] = useState('')
-  const [reminderAt, setReminderAt] = useState('')
-  const [isCreatingEvent, setIsCreatingEvent] = useState(false)
-  const [createError, setCreateError] = useState<string | null>(null)
-  const [deletingEventIds, setDeletingEventIds] = useState<Set<number>>(
-    () => new Set(),
-  )
-  const [deleteError, setDeleteError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let isCurrent = true
-
-    listEvents(accessToken)
-      .then((nextEvents) => {
-        if (isCurrent) {
-          setEventListState({
-            events: nextEvents,
-            error: null,
-          })
-        }
-      })
-      .catch(() => {
-        if (isCurrent) {
-          setEventListState({
-            events: [],
-            error: '日程列表加载失败，请稍后重试。',
-          })
-        }
-      })
-      .finally(() => {
-        if (isCurrent) {
-          setIsLoadingEvents(false)
-        }
-      })
-
-    return () => {
-      isCurrent = false
-    }
-  }, [accessToken, refreshKey])
-
-  const { events, error: eventsError } = eventListState
-  const canCreateEvent = title.trim().length > 0 && startsAt.length > 0
-  useReminderNotificationScheduler(events, notificationPermission)
-
-  async function handleCreateEvent(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!canCreateEvent) {
-      return
-    }
-
-    setIsCreatingEvent(true)
-    setCreateError(null)
-
-    try {
-      const createdEvent = await createEvent(
-        {
-          title: title.trim(),
-          starts_at: startsAt,
-          reminder_at: reminderAt || null,
-        },
-        accessToken,
-      )
-      setEventListState((current) => ({
-        ...current,
-        events: [...current.events, createdEvent].sort(compareEventsByStart),
-      }))
-      setTitle('')
-      setStartsAt('')
-      setReminderAt('')
-    } catch {
-      setCreateError('日程创建失败，请检查内容后重试。')
-    } finally {
-      setIsCreatingEvent(false)
-    }
-  }
-
-  async function handleDeleteEvent(eventId: number) {
-    setDeleteError(null)
-    setDeletingEventIds((current) => new Set(current).add(eventId))
-
-    try {
-      await deleteEvent(eventId, accessToken)
-      setEventListState((current) => ({
-        ...current,
-        events: current.events.filter((event) => event.id !== eventId),
-      }))
-    } catch {
-      setDeleteError('日程删除失败，请稍后重试。')
-    } finally {
-      setDeletingEventIds((current) => {
-        const nextIds = new Set(current)
-        nextIds.delete(eventId)
-        return nextIds
-      })
-    }
-  }
-
-  return (
-    <section className="events-panel" aria-labelledby="events-title">
-      <div className="section-header">
-        <div>
-          <p className="section-label">我的日程</p>
-          <h2 id="events-title">即将开始</h2>
-        </div>
-        <span className="event-count">{events.length}</span>
-      </div>
-
-      <form className="event-form" onSubmit={handleCreateEvent}>
-        <label>
-          <span>标题</span>
-          <input
-            name="title"
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder="例如：产品评审"
-            required
-            type="text"
-            value={title}
-          />
-        </label>
-        <label>
-          <span>开始时间</span>
-          <input
-            name="starts_at"
-            onChange={(event) => setStartsAt(event.target.value)}
-            required
-            type="datetime-local"
-            value={startsAt}
-          />
-        </label>
-        <label>
-          <span>提醒时间</span>
-          <input
-            name="reminder_at"
-            onChange={(event) => setReminderAt(event.target.value)}
-            type="datetime-local"
-            value={reminderAt}
-          />
-        </label>
-        <button
-          className="primary-button"
-          disabled={!canCreateEvent || isCreatingEvent}
-          type="submit"
-        >
-          {isCreatingEvent ? '正在创建...' : '添加日程'}
-        </button>
-      </form>
-      {createError ? (
-        <p className="error-message form-error" role="alert">
-          {createError}
-        </p>
-      ) : null}
-      {deleteError ? (
-        <p className="error-message form-error" role="alert">
-          {deleteError}
-        </p>
-      ) : null}
-
-      {isLoadingEvents ? (
-        <p className="state-message">正在加载日程...</p>
-      ) : eventsError ? (
-        <p className="error-message" role="alert">
-          {eventsError}
-        </p>
-      ) : events.length > 0 ? (
-        <ul className="event-list" aria-label="日程列表">
-          {events.map((event) => (
-            <li className="event-item" key={event.id}>
-              <div>
-                <p className="event-title">{event.title}</p>
-                <p className="event-time">
-                  {formatEventTime(event.starts_at, event.ends_at)}
-                </p>
-                {event.reminder_at ? (
-                  <p className="event-reminder">
-                    {formatReminderTime(event.reminder_at)}
-                  </p>
-                ) : null}
-              </div>
-              <div className="event-actions">
-                <span className="event-status">{event.status}</span>
-                <button
-                  aria-label={`删除 ${event.title}`}
-                  className="danger-button"
-                  disabled={deletingEventIds.has(event.id)}
-                  onClick={() => void handleDeleteEvent(event.id)}
-                  type="button"
-                >
-                  {deletingEventIds.has(event.id) ? '删除中...' : '删除'}
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="state-message">还没有日程。</p>
-      )}
-    </section>
-  )
-}
-
-function getVoiceStatusText(status: string): string {
-  switch (status) {
-    case 'listening':
-      return '识别中'
-    case 'unsupported':
-      return '不支持'
-    case 'error':
-      return '异常'
-    default:
-      return '待机'
-  }
 }
 
 function toGoogleConnectionState(
@@ -955,14 +588,21 @@ function toGoogleConnectionState(
   }
 }
 
-function getGoogleConnectionText(state: GoogleConnectionState): string {
-  if (state.isLoading) {
-    return '处理中'
+function getInitialNotificationPermission(): NotificationPermission {
+  if (!('Notification' in window)) {
+    return 'denied'
   }
-  if (state.connected) {
-    return `已连接 ${state.calendarId ?? 'primary'}`
+  return window.Notification.permission
+}
+
+function getAudioContextConstructor(): AudioContextConstructor | null {
+  const audioWindow = window as Window & {
+    webkitAudioContext?: AudioContextConstructor
   }
-  return '尚未连接 Google Calendar'
+  if ('AudioContext' in window) {
+    return window.AudioContext as AudioContextConstructor
+  }
+  return audioWindow.webkitAudioContext ?? null
 }
 
 function getCurrentPageUrl(): string {
@@ -976,26 +616,34 @@ function getCurrentPageUrl(): string {
   return url.toString()
 }
 
-function getOAuthCallbackState(): {
-  errorMessage: string | null
-  shouldRefreshEvents: boolean
-} {
+function getOAuthCallbackState(): OAuthCallbackState {
   const params = new URLSearchParams(window.location.search)
-  if (params.get('google_error')) {
+  if (params.get('auth_error')) {
     return {
-      errorMessage: 'Google 日历同步失败，请稍后重试。',
-      shouldRefreshEvents: false,
+      eventListRefreshKey: 0,
+      errorMessage: 'GitHub 登录失败，请重试。',
+      shouldSuppressGooglePrompt: false,
     }
   }
+  if (params.get('google_error')) {
+    return {
+      eventListRefreshKey: 0,
+      errorMessage: 'Google 日历同步失败，请稍后重试。',
+      shouldSuppressGooglePrompt: true,
+    }
+  }
+  const hasGoogleConnectedCallback = params.get('google_connected') === '1'
   return {
+    eventListRefreshKey: hasGoogleConnectedCallback ? 1 : 0,
     errorMessage: null,
-    shouldRefreshEvents: params.get('google_connected') === '1',
+    shouldSuppressGooglePrompt: hasGoogleConnectedCallback,
   }
 }
 
 function useReminderNotificationScheduler(
   events: CalendarEvent[],
   permission: NotificationPermission,
+  onReminderTriggered: () => Promise<void>,
 ) {
   const notifiedEventIdsRef = useRef<Set<number>>(new Set())
 
@@ -1025,6 +673,7 @@ function useReminderNotificationScheduler(
           tag: `vocalendar-event-${event.id}`,
         })
         notifiedEventIdsRef.current.add(event.id)
+        void onReminderTriggered()
       }, delay)
       return [timeoutId]
     })
@@ -1032,7 +681,53 @@ function useReminderNotificationScheduler(
     return () => {
       timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId))
     }
-  }, [events, permission])
+  }, [events, onReminderTriggered, permission])
+}
+
+function toUiCalendarEvent(event: CalendarEvent): UiCalendarEvent {
+  return {
+    color: getEventColor(event.id),
+    dateStr: getRelativeDateLabel(event.starts_at),
+    endTime: event.ends_at ? formatClock(event.ends_at) : '',
+    hasMeetingLink: false,
+    id: String(event.id),
+    location: event.source_text ?? event.status,
+    reminderText: event.reminder_at ? formatReminderTime(event.reminder_at) : null,
+    startTime: event.ends_at
+      ? `${formatClock(event.starts_at)} - ${formatClock(event.ends_at)}`
+      : formatClock(event.starts_at),
+    status: event.status,
+    title: event.title,
+  }
+}
+
+function getEventColor(eventId: number): string {
+  const colors = ['bg-[#7AA68B]', 'bg-[#E6935C]', 'bg-blue-500', 'bg-emerald-500']
+  return colors[eventId % colors.length]
+}
+
+function getRelativeDateLabel(value: string): string {
+  const eventDate = new Date(value)
+  const today = startOfDay(new Date())
+  const target = startOfDay(eventDate)
+  const dayDifference = Math.round(
+    (target.getTime() - today.getTime()) / 86_400_000,
+  )
+
+  if (dayDifference === 0) {
+    return 'Today'
+  }
+  if (dayDifference === 1) {
+    return 'Tomorrow'
+  }
+  return new Intl.DateTimeFormat('zh-CN', {
+    day: '2-digit',
+    month: '2-digit',
+  }).format(eventDate)
+}
+
+function startOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate())
 }
 
 function compareEventsByStart(first: CalendarEvent, second: CalendarEvent) {
@@ -1056,11 +751,45 @@ function formatReminderTime(reminderAt: string): string {
 
 function formatDateTime(value: string): string {
   return new Intl.DateTimeFormat('zh-CN', {
-    month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    month: '2-digit',
   }).format(new Date(value))
+}
+
+function formatClock(value: string): string {
+  return new Intl.DateTimeFormat('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value))
+}
+
+function scheduleReminderSound(audioContext: AudioContext) {
+  const beepOffsets = [0, 0.22, 0.44]
+  const frequencies = [880, 1174, 1568]
+  const startAt = audioContext.currentTime + 0.02
+
+  for (const [index, offset] of beepOffsets.entries()) {
+    const oscillator = audioContext.createOscillator()
+    const gainNode = audioContext.createGain()
+    const beepStart = startAt + offset
+    const beepEnd = beepStart + 0.16
+
+    oscillator.type = 'triangle'
+    oscillator.frequency.setValueAtTime(
+      frequencies[index % frequencies.length],
+      beepStart,
+    )
+    gainNode.gain.setValueAtTime(0.0001, beepStart)
+    gainNode.gain.linearRampToValueAtTime(0.22, beepStart + 0.02)
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, beepEnd)
+
+    oscillator.connect(gainNode)
+    gainNode.connect(audioContext.destination)
+    oscillator.start(beepStart)
+    oscillator.stop(beepEnd)
+  }
 }
 
 export default App

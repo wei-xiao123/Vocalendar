@@ -43,10 +43,69 @@ const getGoogleOAuthStartUrlMock = vi.mocked(getGoogleOAuthStartUrl)
 const listEventsMock = vi.mocked(listEvents)
 const sendAssistantCommandMock = vi.mocked(sendAssistantCommand)
 const useSpeechRecognitionMock = vi.mocked(useSpeechRecognition)
+const originalLocation = window.location
+const oscillatorFrequencySetValueAtTimeMock = vi.fn()
+const oscillatorConnectMock = vi.fn()
+const oscillatorStartMock = vi.fn()
+const oscillatorStopMock = vi.fn()
+const gainConnectMock = vi.fn()
+const gainSetValueAtTimeMock = vi.fn()
+const gainLinearRampToValueAtTimeMock = vi.fn()
+const gainExponentialRampToValueAtTimeMock = vi.fn()
+const audioContextInstances: MockAudioContext[] = []
+
+class MockAudioContext {
+  state: AudioContextState = 'suspended'
+  currentTime = 0
+  destination = {}
+  resume = vi.fn(async () => {
+    this.state = 'running'
+  })
+  close = vi.fn(async () => {})
+  createOscillator = vi.fn(() => ({
+    connect: oscillatorConnectMock,
+    frequency: {
+      setValueAtTime: oscillatorFrequencySetValueAtTimeMock,
+    },
+    start: oscillatorStartMock,
+    stop: oscillatorStopMock,
+    type: 'sine',
+  }))
+  createGain = vi.fn(() => ({
+    connect: gainConnectMock,
+    gain: {
+      exponentialRampToValueAtTime: gainExponentialRampToValueAtTimeMock,
+      linearRampToValueAtTime: gainLinearRampToValueAtTimeMock,
+      setValueAtTime: gainSetValueAtTimeMock,
+    },
+  }))
+
+  constructor() {
+    audioContextInstances.push(this)
+  }
+}
 
 beforeEach(() => {
+  Object.defineProperty(window, 'location', {
+    configurable: true,
+    value: originalLocation,
+  })
+  window.history.replaceState({}, '', '/')
   window.localStorage.clear()
   vi.useRealTimers()
+  audioContextInstances.length = 0
+  oscillatorFrequencySetValueAtTimeMock.mockReset()
+  oscillatorConnectMock.mockReset()
+  oscillatorStartMock.mockReset()
+  oscillatorStopMock.mockReset()
+  gainConnectMock.mockReset()
+  gainSetValueAtTimeMock.mockReset()
+  gainLinearRampToValueAtTimeMock.mockReset()
+  gainExponentialRampToValueAtTimeMock.mockReset()
+  Object.defineProperty(window, 'AudioContext', {
+    configurable: true,
+    value: MockAudioContext,
+  })
   Object.defineProperty(window, 'Notification', {
     configurable: true,
     value: vi.fn(),
@@ -96,6 +155,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+  Reflect.deleteProperty(window, 'AudioContext')
   Reflect.deleteProperty(window, 'Notification')
 })
 
@@ -144,7 +204,10 @@ it('creates and stores a guest session', async () => {
 
   expect(createGuestSessionMock).toHaveBeenCalledOnce()
   expect(await screen.findByText('Guest User')).toBeInTheDocument()
-  expect(listEventsMock).toHaveBeenCalledWith('guest-token')
+  await waitFor(() => {
+    expect(listEventsMock).toHaveBeenCalledWith('guest-token')
+    expect(getGoogleConnectionStatusMock).toHaveBeenCalledWith('guest-token')
+  })
   expect(window.localStorage.getItem('vocalendar.auth')).toContain('guest-token')
 })
 
@@ -193,6 +256,78 @@ it('renders Google Calendar connection controls for signed in users', async () =
 
   expect(await screen.findByText('尚未连接 Google Calendar')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '连接 Google 日历' })).toBeInTheDocument()
+})
+
+it('does not reopen the Google authorization modal after a successful callback', async () => {
+  storeSession()
+  window.history.replaceState({}, '', '/?google_connected=1')
+
+  render(<App />)
+
+  expect(await screen.findByText('尚未连接 Google Calendar')).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '继续并授权' }),
+  ).not.toBeInTheDocument()
+})
+
+it('renders Google Calendar connection controls for guest users', async () => {
+  createGuestSessionMock.mockResolvedValue({
+    access_token: 'guest-token',
+    token_type: 'bearer',
+    user: {
+      id: 1,
+      is_guest: true,
+      username: null,
+      display_name: 'Guest User',
+      avatar_url: null,
+      email: null,
+    },
+  })
+
+  render(<App />)
+  fireEvent.click(screen.getByRole('button', { name: '游客模式' }))
+
+  expect(await screen.findByText('Guest User')).toBeInTheDocument()
+  expect(
+    screen.getByText('游客会话，尚未连接 Google Calendar'),
+  ).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '连接 Google 日历' })).toBeInTheDocument()
+})
+
+it('starts Google OAuth from a guest session', async () => {
+  createGuestSessionMock.mockResolvedValue({
+    access_token: 'guest-token',
+    token_type: 'bearer',
+    user: {
+      id: 1,
+      is_guest: true,
+      username: null,
+      display_name: 'Guest User',
+      avatar_url: null,
+      email: null,
+    },
+  })
+  const assignMock = vi.fn()
+  Object.defineProperty(window, 'location', {
+    configurable: true,
+    value: { assign: assignMock },
+  })
+
+  render(<App />)
+  fireEvent.click(screen.getByRole('button', { name: '游客模式' }))
+  expect(await screen.findByText('Guest User')).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: '连接 Google 日历' }))
+
+  await waitFor(() => {
+    expect(getGoogleOAuthStartUrlMock).toHaveBeenCalledWith(
+      'guest-token',
+      expect.any(String),
+    )
+  })
+  expect(assignMock).toHaveBeenCalledWith(
+    'https://accounts.google.com/o/oauth2/v2/auth',
+  )
 })
 
 it('shows an empty event state', async () => {
@@ -605,6 +740,35 @@ it('renders browser notification permission controls', async () => {
   ).toBeInTheDocument()
 })
 
+it('renders reminder sound controls for signed in users', async () => {
+  storeSession()
+
+  render(<App />)
+
+  expect(await screen.findByText('还没有日程。')).toBeInTheDocument()
+  expect(screen.getByText('未启用')).toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: '启用提醒音' }),
+  ).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '测试提醒音' })).toBeDisabled()
+})
+
+it('enables reminder sound after user interaction', async () => {
+  storeSession()
+
+  render(<App />)
+  await screen.findByText('还没有日程。')
+
+  fireEvent.click(screen.getByRole('button', { name: '启用提醒音' }))
+
+  await waitFor(() => {
+    expect(screen.getByText('已启用')).toBeInTheDocument()
+  })
+  expect(audioContextInstances).toHaveLength(1)
+  expect(audioContextInstances[0].resume).toHaveBeenCalledOnce()
+  expect(screen.getByRole('button', { name: '测试提醒音' })).toBeEnabled()
+})
+
 it('renders reminder times in event and assistant results', async () => {
   storeSession()
   listEventsMock.mockResolvedValue([
@@ -701,6 +865,11 @@ it('schedules reminders while the page is open after notification permission is 
     await Promise.resolve()
   })
   expect(screen.getByText('产品评审')).toBeInTheDocument()
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: '启用提醒音' }))
+    await Promise.resolve()
+  })
+  expect(screen.getByText('已启用')).toBeInTheDocument()
 
   expect(notificationMock).not.toHaveBeenCalled()
   await act(async () => {
@@ -711,6 +880,8 @@ it('schedules reminders while the page is open after notification permission is 
     body: expect.any(String),
     tag: 'vocalendar-event-7',
   })
+  expect(oscillatorStartMock).toHaveBeenCalledTimes(3)
+  expect(oscillatorStopMock).toHaveBeenCalledTimes(3)
 })
 
 it('does not schedule reminders before notification permission is granted', async () => {
@@ -763,6 +934,18 @@ it('disables notification permission request when unsupported', async () => {
   expect(screen.getByRole('button', { name: '请求通知权限' })).toBeDisabled()
 })
 
+it('disables reminder sound controls when audio is unsupported', async () => {
+  storeSession()
+  Reflect.deleteProperty(window, 'AudioContext')
+
+  render(<App />)
+
+  expect(await screen.findByText('还没有日程。')).toBeInTheDocument()
+  expect(screen.getAllByText('不支持')).toHaveLength(1)
+  expect(screen.getByRole('button', { name: '启用提醒音' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: '测试提醒音' })).toBeDisabled()
+})
+
 it('navigates to GitHub OAuth start', () => {
   const assignMock = vi.fn()
   Object.defineProperty(window, 'location', {
@@ -777,6 +960,7 @@ it('navigates to GitHub OAuth start', () => {
   expect(assignMock).toHaveBeenCalledWith(
     expect.stringContaining('http://localhost:8000/auth/github/start'),
   )
+  expect(screen.getByRole('button', { name: '跳转中...' })).toBeDisabled()
 })
 
 it('shows an error when guest session creation fails', async () => {
@@ -788,4 +972,15 @@ it('shows an error when guest session creation fails', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent(
     '游客模式暂时不可用，请稍后重试。',
   )
+})
+
+it('shows GitHub OAuth callback errors on the login screen', async () => {
+  window.history.replaceState({}, '', '/?auth_error=github_login_failed')
+
+  render(<App />)
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'GitHub 登录失败，请重试。',
+  )
+  expect(window.location.search).toBe('')
 })

@@ -69,4 +69,5 @@ apps/api/.venv/Scripts/python -m pytest apps/api/tests
   - Set `DATABASE_URL` on the API service.
 
 Set `VITE_API_URL` on the web service to the deployed public API URL. Set
-`API_CORS_ORIGINS` on the API service to the deployed public web URL.
+`API_CORS_ORIGINS` on the API service to the deployed public web URL, and set
+`WEB_APP_URL` to the primary web entry URL used for OAuth callback fallback.
